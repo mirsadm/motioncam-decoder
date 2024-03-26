@@ -1,5 +1,6 @@
 #include <motioncam/RawData.hpp>
 #include <vector>
+#include <cstring>
 
 namespace motioncam {
     namespace raw {
