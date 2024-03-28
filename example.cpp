@@ -90,8 +90,20 @@ void writeDng(
     dng.SetBlackLevel(4, blackLevel.data());
     dng.SetWhiteLevelRational(1, &whiteLevel);
 
-    const uint8_t cfa[4] = { 2, 1, 1, 0 };
-    dng.SetCFAPattern(4, cfa);
+    std::vector<uint8_t> cfa;
+    
+    if(sensorArrangement == "rggb")
+        cfa = { 0, 1, 1, 2 };
+    else if(sensorArrangement == "bggr")
+        cfa = { 2, 1, 1, 0 };
+    else if(sensorArrangement == "grbg")
+        cfa = { 1, 0, 2, 1 };
+    else if(sensorArrangement == "gbrg")
+        cfa = { 1, 2, 0, 1 };
+    else
+        throw std::runtime_error("Invalid sensor arrangement");
+
+    dng.SetCFAPattern(4, cfa.data());
     
     // Rectangular
     dng.SetCFALayout(1);
@@ -115,7 +127,7 @@ void writeDng(
     tinydngwriter::DNGWriter writer(false);
 
     writer.AddImage(&dng);
-    
+
     writer.WriteToFile(outputPath.c_str(), &err);
 }
 
