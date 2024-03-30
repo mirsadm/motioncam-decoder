@@ -231,7 +231,7 @@ namespace motioncam {
                 break;
             
             // Skip things we don't need
-            if(item.type == Type::BUFFER || item.type == Type::METADATA || item.type == Type::AUDIO_DATA) {
+            if(item.type == Type::BUFFER || item.type == Type::METADATA || item.type == Type::AUDIO_DATA || item.type == Type::AUDIO_DATA_METADATA) {
                 if(FSEEK(mFile, item.size, SEEK_CUR) != 0)
                     break;
             }
