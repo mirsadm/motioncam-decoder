@@ -11,6 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include_directories(motioncam_decoder lib/include thirdparty)
 
 add_library(motioncam_decoder lib/Decoder.cpp lib/RawData.cpp)
+set_property(TARGET motioncam_decoder PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 add_executable(example example.cpp)
 
@@ -19,5 +20,5 @@ target_link_libraries(example PRIVATE motioncam_decoder)
 if (MSVC)
     add_compile_options(/W4 /WX)
 else()
-    add_compile_options(-Wall -Wextra -pedantic -Werror)
+    add_compile_options(-Wall -Werror -O3)
 endif()
