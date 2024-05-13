@@ -79,12 +79,12 @@ namespace motioncam {
         
         INLINE
         UInt16x8 operator<<(const int16_t n) const {
-            return UInt16x8(simde_vshlq_u16(d, vdupq_n_s16(n)));
+            return UInt16x8(simde_vshlq_u16(d, simde_vdupq_n_s16(n)));
         }
         
         INLINE
         UInt16x8 operator>>(const int16_t n) const {
-            return UInt16x8(simde_vshlq_u16(d, vdupq_n_s16(-n)));
+            return UInt16x8(simde_vshlq_u16(d, simde_vdupq_n_s16(-n)));
         }
     };
 
