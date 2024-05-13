@@ -167,7 +167,7 @@ namespace motioncam {
         const size_t outputSizeBytes = sizeof(uint16_t) * width*height;
         outData.resize(outputSizeBytes);
         
-        if(raw::Decode(outData.data(), width, height, mTmpBuffer.data(), mTmpBuffer.size(), mThreadPool) <= 0)
+        if(raw::Decode(outData.data(), width, height, mTmpBuffer.data(), mTmpBuffer.size()) <= 0)
             throw IOException("Failed to uncompress frame");
     }
 

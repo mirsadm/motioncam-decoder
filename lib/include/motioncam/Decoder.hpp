@@ -19,7 +19,6 @@
 
 #include <motioncam/Container.hpp>
 #include <nlohmann/json.hpp>
-#include <threadpool/BS_thread_pool.hpp>
 
 #include <string>
 #include <vector>
@@ -80,8 +79,6 @@ namespace motioncam {
         std::vector<Timestamp> mFrameList;
         nlohmann::json mMetadata;
         std::vector<uint8_t> mTmpBuffer;
-        BS::thread_pool mThreadPool;
-        
     };
 } // namespace motioncam
 

@@ -26,13 +26,12 @@ namespace BS {
 
 namespace motioncam {
     namespace raw {
-        int Decode(
+        size_t Decode(
             uint16_t* output,
             const int width,
             const int height,
             const uint8_t* input,
-            const size_t len,
-            BS::thread_pool& threadPool);
+            const size_t len);
     }
 }
 

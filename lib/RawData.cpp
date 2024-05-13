@@ -2,7 +2,6 @@
 #include <vector>
 #include <cstring>
 
-#include <threadpool/BS_thread_pool.hpp>
 #include <simde/arm/neon.h>
 
 #if defined(__GNUC__)
@@ -522,14 +521,20 @@ namespace motioncam {
     
     } // unnamed namespace
 
-    int Decode(
-        uint16_t *RESTRICT output,
+    size_t Decode(
+        uint16_t* output,
         const int width,
         const int height,
         const uint8_t* input,
-        const size_t len,
-        BS::thread_pool& threadPool)
+        const size_t len)
     {
+        uint16_t* outputStart = output;
+        
+        uint16_t p0[ENCODING_BLOCK];
+        uint16_t p1[ENCODING_BLOCK];
+        uint16_t p2[ENCODING_BLOCK];
+        uint16_t p3[ENCODING_BLOCK];
+
         std::vector<uint16_t> bits, refs;
         uint32_t encodedWidth, encodedHeight, bitsOffset, refsOffset;
 
@@ -549,88 +554,56 @@ namespace motioncam {
         
         // Decode refs
         DecodeMetadata(input, refsOffset, len, refs);
-    
-        // Create offset list
-        std::vector<size_t> offsets;
-        offsets.reserve(encodedHeight / 4);
+
+        size_t offset = METADATA_OFFSET;
         
-        int idx = 0;
-        size_t curOffset = METADATA_OFFSET;
+        std::vector<uint16_t> row0(encodedWidth);
+        std::vector<uint16_t> row1(encodedWidth);
+        std::vector<uint16_t> row2(encodedWidth);
+        std::vector<uint16_t> row3(encodedWidth);
+        
+        int metadataIdx = 0;
 
         for(int y = 0; y < encodedHeight; y+=4) {
-            offsets.push_back(curOffset);
-
             for(int x = 0; x < encodedWidth; x += ENCODING_BLOCK) {
-                curOffset += ENCODING_BLOCK_LENGTH[bits[idx]  ];
-                curOffset += ENCODING_BLOCK_LENGTH[bits[idx+1]];
-                curOffset += ENCODING_BLOCK_LENGTH[bits[idx+2]];
-                curOffset += ENCODING_BLOCK_LENGTH[bits[idx+3]];
+                uint16_t blockBits[4] = { bits[metadataIdx], bits[metadataIdx+1], bits[metadataIdx+2], bits[metadataIdx+3] };
+                uint16_t blockRef[4] = { refs[metadataIdx], refs[metadataIdx+1], refs[metadataIdx+2], refs[metadataIdx+3] };
+            
+                offset += DecodeBlock(&p0[0], blockBits[0], input, offset, len);
+                offset += DecodeBlock(&p1[0], blockBits[1], input, offset, len);
+                offset += DecodeBlock(&p2[0], blockBits[2], input, offset, len);
+                offset += DecodeBlock(&p3[0], blockBits[3], input, offset, len);
+
+                for(int i = 0; i < ENCODING_BLOCK; i+=2) {
+                    row0[x + i]     = p0[i/2] + blockRef[0];
+                    row0[x + i + 1] = p1[i/2] + blockRef[1];
+                    
+                    row1[x + i]     = p2[i/2] + blockRef[2];
+                    row1[x + i + 1] = p3[i/2] + blockRef[3];
+
+                    row2[x + i]     = p0[ENCODING_BLOCK/2+i/2] + blockRef[0];
+                    row2[x + i + 1] = p1[ENCODING_BLOCK/2+i/2] + blockRef[1];
+                    
+                    row3[x + i]     = p2[ENCODING_BLOCK/2+i/2] + blockRef[2];
+                    row3[x + i + 1] = p3[ENCODING_BLOCK/2+i/2] + blockRef[3];
+                }
                 
-                idx += 4;
+                metadataIdx += 4;
             }
+
+            std::memcpy(output, row0.data(), width * 2);
+            output += width;
+
+            std::memcpy(output, row1.data(), width * 2);
+            output += width;
+
+            std::memcpy(output, row2.data(), width * 2);
+            output += width;
+
+            std::memcpy(output, row3.data(), width * 2);
+            output += width;
         }
         
-        // Decode in parallel
-        auto future = threadPool.submit_blocks(static_cast<uint32_t>(0), encodedHeight / 4, [&] (const int start, const int end) {
-                uint16_t p0[ENCODING_BLOCK];
-                uint16_t p1[ENCODING_BLOCK];
-                uint16_t p2[ENCODING_BLOCK];
-                uint16_t p3[ENCODING_BLOCK];
-
-                std::vector<uint16_t> row0(encodedWidth);
-                std::vector<uint16_t> row1(encodedWidth);
-                std::vector<uint16_t> row2(encodedWidth);
-                std::vector<uint16_t> row3(encodedWidth);
-                
-                int metadataIdx = start * 4 * encodedWidth / ENCODING_BLOCK;
-                uint16_t *RESTRICT dst = output + 4 * start * width;
-                size_t offset = offsets[start];
-                
-                for(int i = start; i < end; i++) {
-                    for(int x = 0; x < encodedWidth; x += ENCODING_BLOCK) {
-                        const uint16_t blockBits[4] = { bits[metadataIdx], bits[metadataIdx+1], bits[metadataIdx+2], bits[metadataIdx+3] };
-                        const uint16_t blockRef[4] = { refs[metadataIdx], refs[metadataIdx+1], refs[metadataIdx+2], refs[metadataIdx+3] };
-                    
-                        offset += DecodeBlock(&p0[0], blockBits[0], input, offset, len);
-                        offset += DecodeBlock(&p1[0], blockBits[1], input, offset, len);
-                        offset += DecodeBlock(&p2[0], blockBits[2], input, offset, len);
-                        offset += DecodeBlock(&p3[0], blockBits[3], input, offset, len);
-
-                        for(int i = 0; i < ENCODING_BLOCK; i+=2) {
-                            row0[x + i]     = p0[i/2] + blockRef[0];
-                            row0[x + i + 1] = p1[i/2] + blockRef[1];
-                            
-                            row1[x + i]     = p2[i/2] + blockRef[2];
-                            row1[x + i + 1] = p3[i/2] + blockRef[3];
-
-                            row2[x + i]     = p0[ENCODING_BLOCK/2+i/2] + blockRef[0];
-                            row2[x + i + 1] = p1[ENCODING_BLOCK/2+i/2] + blockRef[1];
-                            
-                            row3[x + i]     = p2[ENCODING_BLOCK/2+i/2] + blockRef[2];
-                            row3[x + i + 1] = p3[ENCODING_BLOCK/2+i/2] + blockRef[3];
-                        }
-                        
-                        metadataIdx += 4;
-                    }
-
-                    std::memcpy(dst, row0.data(), width * sizeof(uint16_t));
-                    dst += width;
-
-                    std::memcpy(dst, row1.data(), width * sizeof(uint16_t));
-                    dst += width;
-
-                    std::memcpy(dst, row2.data(), width * sizeof(uint16_t));
-                    dst += width;
-
-                    std::memcpy(dst, row3.data(), width * sizeof(uint16_t));
-                    dst += width;
-                }
-            }
-        );
-        
-        // Wait until we complete decoding
-        future.get();
-
-        return 1;
+        return (output - outputStart);
     }
 }}
