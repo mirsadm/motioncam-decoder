@@ -40,6 +40,65 @@ THE SOFTWARE.
 #define ROL16(v,a) ((v) << (a) | (v) >> (16-(a)))
 #endif
 
+// low-level read and write functions
+#ifdef _MSC_VER
+# include <io.h>
+#else
+# include <unistd.h>
+//extern "C" {
+//    int write (int fd, const char* buf, int num);
+//    int read (int fd, char* buf, int num);
+//}
+#endif
+
+
+// BEGIN namespace BOOST
+namespace boost {
+
+
+/************************************************************
+ * fdostream
+ * - a stream that writes on a file descriptor
+ ************************************************************/
+
+
+class fdoutbuf : public std::streambuf {
+  protected:
+    int fd;    // file descriptor
+  public:
+    // constructor
+    fdoutbuf (int _fd) : fd(_fd) {
+    }
+  protected:
+    // write one character
+    virtual int_type overflow (int_type c) {
+        if (c != EOF) {
+            char z = c;
+            if (write (fd, &z, 1) != 1) {
+                return EOF;
+            }
+        }
+        return c;
+    }
+    // write multiple characters
+    virtual
+    std::streamsize xsputn (const char* s,
+                            std::streamsize num) {
+        return write(fd,s,num);
+    }
+};
+
+class fdostream : public std::ostream {
+  protected:
+    fdoutbuf buf;
+  public:
+    fdostream (int fd) : std::ostream(0), buf(fd) {
+        rdbuf(&buf);
+    }
+};
+
+} // END namespace boost
+
 namespace tinydngwriter {
 
 typedef enum {
@@ -174,8 +233,8 @@ class DNGImage {
   bool SetCompression(unsigned short value);
   bool SetSampleFormat(const unsigned int num_samples,
                        const unsigned short *values);
-  bool SetXResolution(double value);
-  bool SetYResolution(double value);
+  bool SetXResolution(float value);
+  bool SetYResolution(float value);
   bool SetResolutionUnit(const unsigned short value);
 
   ///
@@ -198,19 +257,20 @@ class DNGImage {
 
   bool SetActiveArea(const unsigned int values[4]);
 
-  bool SetChromaBlurRadius(double value);
+  bool SetChromaBlurRadius(float value);
 
   /// Specify black level per sample.
   bool SetBlackLevel(const unsigned int num_samples, const unsigned short *values);
 
   /// Specify black level per sample (as rational values).
-  bool SetBlackLevelRational(unsigned int num_samples, const double *values);
+  bool SetBlackLevelRational(unsigned int num_samples, const float *values);
 
   /// Specify white level per sample.
-  bool SetWhiteLevelRational(unsigned int num_samples, const double *values);
+  bool SetWhiteLevel(const short value);
+  bool SetWhiteLevelRational(unsigned int num_samples, const float *values);
 
   /// Specify analog white balance from camera for raw values.
-  bool SetAnalogBalance(const unsigned int plane_count, const double *matrix_values);
+  bool SetAnalogBalance(const unsigned int plane_count, const float *matrix_values);
 
   /// Specify CFA repeating pattern dimensions.
   bool SetCFARepeatPatternDim(const unsigned short width, const unsigned short height);
@@ -226,26 +286,26 @@ class DNGImage {
   bool SetDNGBackwardVersion(const unsigned char a, const unsigned char b, const unsigned char c, const unsigned char d);
 
   /// Specify transformation matrix (XYZ to reference camera native color space values, under the first calibration illuminant).
-  bool SetColorMatrix1(const unsigned int plane_count, const double *matrix_values);
+  bool SetColorMatrix1(const unsigned int plane_count, const float *matrix_values);
 
   /// Specify transformation matrix (XYZ to reference camera native color space values, under the second calibration illuminant).
-  bool SetColorMatrix2(const unsigned int plane_count, const double *matrix_values);
+  bool SetColorMatrix2(const unsigned int plane_count, const float *matrix_values);
 
-  bool SetForwardMatrix1(const unsigned int plane_count, const double *matrix_values);
-  bool SetForwardMatrix2(const unsigned int plane_count, const double *matrix_values);
+  bool SetForwardMatrix1(const unsigned int plane_count, const float *matrix_values);
+  bool SetForwardMatrix2(const unsigned int plane_count, const float *matrix_values);
 
-  bool SetCameraCalibration1(const unsigned int plane_count, const double *matrix_values);
-  bool SetCameraCalibration2(const unsigned int plane_count, const double *matrix_values);
+  bool SetCameraCalibration1(const unsigned int plane_count, const float *matrix_values);
+  bool SetCameraCalibration2(const unsigned int plane_count, const float *matrix_values);
 
   /// Specify CFA geometric pattern (left-to-right, top-to-bottom).
   bool SetCFAPattern(const unsigned int num_components, const unsigned char *values);
-  bool SetCFALayout(const unsigned char value);
+  bool SetCFALayout(const unsigned short value);
   
   /// Specify the selected white balance at time of capture, encoded as the coordinates of a perfectly neutral color in linear reference space values.
-  bool SetAsShotNeutral(const unsigned int plane_count, const double *matrix_values);
+  bool SetAsShotNeutral(const unsigned int plane_count, const float *matrix_values);
 
   /// Specify the the selected white balance at time of capture, encoded as x-y chromaticity coordinates.
-  bool SetAsShotWhiteXY(const double x, const double y);
+  bool SetAsShotWhiteXY(const float x, const float y);
 
   /// Set image data with packing (take 16-bit values and pack them to input_bpp values).
   bool SetImageDataPacked(const unsigned short *input_buffer, const int input_count, const unsigned int input_bpp, bool big_endian);
@@ -316,7 +376,9 @@ class DNGWriter {
   /// Return error string to `err` when Write() returns false.
   /// Returns true upon success.
   bool WriteToFile(const char *filename, std::string *err) const;
-
+  bool WriteToFile(int fd, std::string *err) const;
+  bool WriteToFile(std::ostream& stream, std::string *err) const;
+  
  private:
   bool swap_endian_;
   bool dng_big_endian_;  // Endianness of DNG file.
@@ -422,40 +484,40 @@ const static int kHeaderSize = 8;  // TIFF header size.
 // https://stackoverflow.com/questions/51142275/exact-value-of-a-floating-point-number-as-a-rational
 //
 // Return error flag
-static int DoubleToRational(double x, double *numerator, double *denominator) {
+static int FloatToRational(float x, float *numerator, float *denominator) {
   if (!std::isfinite(x)) {
-    *numerator = *denominator = 0.0;
-    if (x > 0.0) *numerator = 1.0;
-    if (x < 0.0) *numerator = -1.0;
+    *numerator = *denominator = 0.0f;
+    if (x > 0.0f) *numerator = 1.0f;
+    if (x < 0.0f) *numerator = -1.0f;
     return 1;
   }
 
   // TIFF Rational use two uint32's, so reduce the bits
   int bdigits = FLT_MANT_DIG;
   int expo;
-  *denominator = 1.0;
-  *numerator = std::frexp(x, &expo) * std::pow(2.0, bdigits);
+  *denominator = 1.0f;
+  *numerator = std::frexp(x, &expo) * std::pow(2.0f, bdigits);
   expo -= bdigits;
   if (expo > 0) {
-    *numerator *= std::pow(2.0, expo);
+    *numerator *= std::pow(2.0f, expo);
   } else if (expo < 0) {
     expo = -expo;
     if (expo >= FLT_MAX_EXP - 1) {
-      *numerator /= std::pow(2.0, expo - (FLT_MAX_EXP - 1));
-      *denominator *= std::pow(2.0, FLT_MAX_EXP - 1);
-      return fabs(*numerator) < 1.0;
+      *numerator /= std::pow(2.0f, expo - (FLT_MAX_EXP - 1));
+      *denominator *= std::pow(2.0f, FLT_MAX_EXP - 1);
+      return fabs(*numerator) < 1.0f;
     } else {
-      *denominator *= std::pow(2.0, expo);
+      *denominator *= std::pow(2.0f, expo);
     }
   }
 
-  while ((std::fabs(*numerator) > 0.0) &&
+  while ((std::fabs(*numerator) > 0.0f) &&
          (std::fabs(std::fmod(*numerator, 2)) <
-          std::numeric_limits<double>::epsilon()) &&
+          std::numeric_limits<float>::epsilon()) &&
          (std::fabs(std::fmod(*denominator, 2)) <
-          std::numeric_limits<double>::epsilon())) {
-    *numerator /= 2.0;
-    *denominator /= 2.0;
+          std::numeric_limits<float>::epsilon())) {
+    *numerator /= 2.0f;
+    *denominator /= 2.0f;
   }
   return 0;
 }
@@ -954,7 +1016,7 @@ bool DNGImage::SetBlackLevel(const unsigned int num_components,
 }
 
 bool DNGImage::SetBlackLevelRational(unsigned int num_samples,
-                                     const double *values) {
+                                     const float *values) {
   // `SetSamplesPerPixel()` must be called in advance and SPP shoud be equal to
   // `num_samples`.
   if ((num_samples > 0) && (num_samples == samples_per_pixels_)) {
@@ -965,8 +1027,8 @@ bool DNGImage::SetBlackLevelRational(unsigned int num_samples,
 
   std::vector<unsigned int> vs(num_samples * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
-    double numerator, denominator;
-    if (DoubleToRational(values[i], &numerator, &denominator) != 0) {
+    float numerator, denominator;
+    if (FloatToRational(values[i], &numerator, &denominator) != 0) {
       // Couldn't represent fp value as integer rational value.
       return false;
     }
@@ -996,8 +1058,22 @@ bool DNGImage::SetBlackLevelRational(unsigned int num_samples,
   return true;
 }
 
+bool DNGImage::SetWhiteLevel(const short value) {
+  bool ret = WriteTIFFTag(
+      static_cast<unsigned short>(TIFFTAG_WHITE_LEVEL), TIFF_SHORT, 1,
+      reinterpret_cast<const unsigned char *>(&value),
+      &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
 bool DNGImage::SetWhiteLevelRational(unsigned int num_samples,
-                                     const double *values) {
+                                     const float *values) {
   // `SetSamplesPerPixel()` must be called in advance and SPP shoud be equal to
   // `num_samples`.
   if ((num_samples > 0) && (num_samples == samples_per_pixels_)) {
@@ -1008,8 +1084,8 @@ bool DNGImage::SetWhiteLevelRational(unsigned int num_samples,
 
   std::vector<unsigned int> vs(num_samples * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
-    double numerator, denominator;
-    if (DoubleToRational(values[i], &numerator, &denominator) != 0) {
+    float numerator, denominator;
+    if (FloatToRational(values[i], &numerator, &denominator) != 0) {
       // Couldn't represent fp value as integer rational value.
       return false;
     }
@@ -1039,9 +1115,9 @@ bool DNGImage::SetWhiteLevelRational(unsigned int num_samples,
   return true;
 }
 
-bool DNGImage::SetXResolution(const double value) {
-  double numerator, denominator;
-  if (DoubleToRational(value, &numerator, &denominator) != 0) {
+bool DNGImage::SetXResolution(const float value) {
+  float numerator, denominator;
+  if (FloatToRational(value, &numerator, &denominator) != 0) {
     // Couldn't represent fp value as integer rational value.
     return false;
   }
@@ -1068,9 +1144,9 @@ bool DNGImage::SetXResolution(const double value) {
   return true;
 }
 
-bool DNGImage::SetYResolution(const double value) {
-  double numerator, denominator;
-  if (DoubleToRational(value, &numerator, &denominator) != 0) {
+bool DNGImage::SetYResolution(const float value) {
+  float numerator, denominator;
+  if (FloatToRational(value, &numerator, &denominator) != 0) {
     // Couldn't represent fp value as integer rational value.
     return false;
   }
@@ -1257,11 +1333,11 @@ bool DNGImage::SetDNGBackwardVersion(const unsigned char a,
 }
 
 bool DNGImage::SetColorMatrix1(const unsigned int plane_count,
-                               const double *matrix_values) {
+                               const float *matrix_values) {
   std::vector<int> vs(plane_count * 3 * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
-    double numerator, denominator;
-    if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
+    float numerator, denominator;
+    if (FloatToRational(matrix_values[i], &numerator, &denominator) != 0) {
       // Couldn't represent fp value as integer rational value.
       return false;
     }
@@ -1289,11 +1365,11 @@ bool DNGImage::SetColorMatrix1(const unsigned int plane_count,
 }
 
 bool DNGImage::SetColorMatrix2(const unsigned int plane_count,
-                               const double *matrix_values) {
+                               const float *matrix_values) {
   std::vector<int> vs(plane_count * 3 * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
-    double numerator, denominator;
-    if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
+    float numerator, denominator;
+    if (FloatToRational(matrix_values[i], &numerator, &denominator) != 0) {
       // Couldn't represent fp value as integer rational value.
       return false;
     }
@@ -1321,11 +1397,11 @@ bool DNGImage::SetColorMatrix2(const unsigned int plane_count,
 }
 
 bool DNGImage::SetForwardMatrix1(const unsigned int plane_count,
-                                 const double *matrix_values) {
+                                 const float *matrix_values) {
   std::vector<int> vs(plane_count * 3 * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
-    double numerator, denominator;
-    if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
+    float numerator, denominator;
+    if (FloatToRational(matrix_values[i], &numerator, &denominator) != 0) {
       // Couldn't represent fp value as integer rational value.
       return false;
     }
@@ -1353,11 +1429,11 @@ bool DNGImage::SetForwardMatrix1(const unsigned int plane_count,
 }
 
 bool DNGImage::SetForwardMatrix2(const unsigned int plane_count,
-                                 const double *matrix_values) {
+                                 const float *matrix_values) {
   std::vector<int> vs(plane_count * 3 * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
-    double numerator, denominator;
-    if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
+    float numerator, denominator;
+    if (FloatToRational(matrix_values[i], &numerator, &denominator) != 0) {
       // Couldn't represent fp value as integer rational value.
       return false;
     }
@@ -1385,11 +1461,11 @@ bool DNGImage::SetForwardMatrix2(const unsigned int plane_count,
 }
 
 bool DNGImage::SetCameraCalibration1(const unsigned int plane_count,
-                                     const double *matrix_values) {
+                                     const float *matrix_values) {
   std::vector<unsigned int> vs(plane_count * plane_count * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
-    double numerator, denominator;
-    if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
+    float numerator, denominator;
+    if (FloatToRational(matrix_values[i], &numerator, &denominator) != 0) {
       // Couldn't represent fp value as integer rational value.
       return false;
     }
@@ -1417,11 +1493,11 @@ bool DNGImage::SetCameraCalibration1(const unsigned int plane_count,
 }
 
 bool DNGImage::SetCameraCalibration2(const unsigned int plane_count,
-                                     const double *matrix_values) {
+                                     const float *matrix_values) {
   std::vector<unsigned int> vs(plane_count * plane_count * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
-    double numerator, denominator;
-    if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
+    float numerator, denominator;
+    if (FloatToRational(matrix_values[i], &numerator, &denominator) != 0) {
       // Couldn't represent fp value as integer rational value.
       return false;
     }
@@ -1449,11 +1525,11 @@ bool DNGImage::SetCameraCalibration2(const unsigned int plane_count,
 }
 
 bool DNGImage::SetAnalogBalance(const unsigned int plane_count,
-                                const double *matrix_values) {
+                                const float *matrix_values) {
   std::vector<unsigned int> vs(plane_count * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
-    double numerator, denominator;
-    if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
+    float numerator, denominator;
+    if (FloatToRational(matrix_values[i], &numerator, &denominator) != 0) {
       // Couldn't represent fp value as integer rational value.
       return false;
     }
@@ -1561,9 +1637,9 @@ bool DNGImage::SetCFAPattern(const unsigned int num_components,
   return true;
 }
 
-bool DNGImage::SetCFALayout(const unsigned char value) {
+bool DNGImage::SetCFALayout(const unsigned short value) {
   bool ret = WriteTIFFTag(
-      static_cast<unsigned short>(TIFFTAG_CFA_LAYOUT), TIFF_BYTE, 1,
+      static_cast<unsigned short>(TIFFTAG_CFA_LAYOUT), TIFF_SHORT, 1,
       reinterpret_cast<const unsigned char *>(&value),
       &ifd_tags_, &data_os_);
 
@@ -1576,11 +1652,11 @@ bool DNGImage::SetCFALayout(const unsigned char value) {
 }
 
 bool DNGImage::SetAsShotNeutral(const unsigned int plane_count,
-                                const double *matrix_values) {
+                                const float *matrix_values) {
   std::vector<unsigned int> vs(plane_count * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
-    double numerator, denominator;
-    if (DoubleToRational(matrix_values[i], &numerator, &denominator) != 0) {
+    float numerator, denominator;
+    if (FloatToRational(matrix_values[i], &numerator, &denominator) != 0) {
       // Couldn't represent fp value as integer rational value.
       return false;
     }
@@ -1607,12 +1683,12 @@ bool DNGImage::SetAsShotNeutral(const unsigned int plane_count,
   return true;
 }
 
-bool DNGImage::SetAsShotWhiteXY(const double x, const double y) {
-  const double values[2] = {x, y};
+bool DNGImage::SetAsShotWhiteXY(const float x, const float y) {
+  const float values[2] = {x, y};
   std::vector<unsigned int> vs(2 * 2);
   for (size_t i = 0; i * 2 < vs.size(); i++) {
-    double numerator, denominator;
-    if (DoubleToRational(values[i], &numerator, &denominator) != 0) {
+    float numerator, denominator;
+    if (FloatToRational(values[i], &numerator, &denominator) != 0) {
       // Couldn't represent fp value as integer rational value.
       return false;
     }
@@ -1914,7 +1990,25 @@ bool DNGWriter::WriteToFile(const char *filename, std::string *err) const {
 
     return false;
   }
+  
+  return WriteToFile(ofs, err);
+}
 
+bool DNGWriter::WriteToFile(int fd, std::string *err) const {
+  boost::fdostream ofs(fd);
+
+  if (!ofs) {
+    if (err) {
+      (*err) = "Failed to open file.\n";
+    }
+
+    return false;
+  }
+  
+  return WriteToFile(ofs, err);
+}
+
+bool DNGWriter::WriteToFile(std::ostream& ofs, std::string *err) const {
   std::ostringstream header;
   bool ret = WriteTIFFVersionHeader(&header, dng_big_endian_);
   if (!ret) {

@@ -61,22 +61,22 @@ void writeDng(
     const unsigned int width = metadata["width"];
     const unsigned int height = metadata["height"];
     
-    std::vector<double> asShotNeutral = metadata["asShotNeutral"];
+    std::vector<float> asShotNeutral = metadata["asShotNeutral"];
 
     std::vector<uint16_t> blackLevel = containerMetadata["blackLevel"];
     double whiteLevel = containerMetadata["whiteLevel"];
     std::string sensorArrangement = containerMetadata["sensorArrangment"];
-    std::vector<double> colorMatrix1 = containerMetadata["colorMatrix1"];
-    std::vector<double> colorMatrix2 = containerMetadata["colorMatrix2"];
-    std::vector<double> forwardMatrix1 = containerMetadata["forwardMatrix1"];
-    std::vector<double> forwardMatrix2 = containerMetadata["forwardMatrix2"];
+    std::vector<float> colorMatrix1 = containerMetadata["colorMatrix1"];
+    std::vector<float> colorMatrix2 = containerMetadata["colorMatrix2"];
+    std::vector<float> forwardMatrix1 = containerMetadata["forwardMatrix1"];
+    std::vector<float> forwardMatrix2 = containerMetadata["forwardMatrix2"];
 
     // Create first frame
     tinydngwriter::DNGImage dng;
 
     dng.SetBigEndian(false);
-    dng.SetDNGVersion(0, 0, 4, 1);
-    dng.SetDNGBackwardVersion(0, 0, 1, 1);
+    dng.SetDNGVersion(1, 4, 0, 0);
+    dng.SetDNGBackwardVersion(1, 1, 0, 0);
     dng.SetImageData(reinterpret_cast<const unsigned char*>(data.data()), data.size());
     dng.SetImageWidth(width);
     dng.SetImageLength(height);
@@ -88,7 +88,8 @@ void writeDng(
     
     dng.SetBlackLevelRepeatDim(2, 2);
     dng.SetBlackLevel(4, blackLevel.data());
-    dng.SetWhiteLevelRational(1, &whiteLevel);
+    dng.SetWhiteLevel(whiteLevel);
+    dng.SetCompression(tinydngwriter::COMPRESSION_NONE);
 
     std::vector<uint8_t> cfa;
     
@@ -119,6 +120,12 @@ void writeDng(
     
     dng.SetAsShotNeutral(3, asShotNeutral.data());
     
+    dng.SetCalibrationIlluminant1(21);
+    dng.SetCalibrationIlluminant2(17);
+    
+    dng.SetUniqueCameraModel("MotionCam");
+    dng.SetSubfileType();
+    
     const uint32_t activeArea[4] = { 0, 0, height, width };
     dng.SetActiveArea(&activeArea[0]);
 
@@ -145,6 +152,7 @@ int main(int argc, const char * argv[]) {
             endFrame = std::stoi(argv[3]);
     }
 
+    // Write DNG
     try {
         motioncam::Decoder d(inputPath);
         
