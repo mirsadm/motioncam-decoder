@@ -164,8 +164,9 @@ namespace motioncam {
             throw IOException("Invalid compression type");
             
         // Decompress the buffer
-        const size_t outputSizeBytes = sizeof(uint16_t) * width*height;
-        outData.resize(outputSizeBytes);
+        outData.resize(width * height);
+        // const size_t outputSizeBytes = sizeof(uint16_t) * width*height;
+        // outData.resize(outputSizeBytes);
         
         if(raw::Decode(outData.data(), width, height, mTmpBuffer.data(), mTmpBuffer.size()) <= 0)
             throw IOException("Failed to uncompress frame");
