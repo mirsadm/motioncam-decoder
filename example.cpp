@@ -1,193 +1,88 @@
-/*
- * Copyright 2023 MotionCam
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 #include <iostream>
-
+#include <vector>
+#include <string>
+#include <cstdio>
+#include <stdexcept>
+#include <algorithm>
 #include <motioncam/Decoder.hpp>
-#include <audiofile/AudioFile.h>
+#include <nlohmann/json.hpp>
 
-#define TINY_DNG_WRITER_IMPLEMENTATION
-    #include <tinydng/tiny_dng_writer.h>
-#undef TINY_DNG_WRITER_IMPLEMENTATION
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#endif
 
-void writeAudio(
-    const std::string& outputPath,
-    const int sampleRateHz,
-    const int numChannels,
-    std::vector<motioncam::AudioChunk>& audioChunks)
-{
-    AudioFile<int16_t> audio;
-    
-    audio.setNumChannels(numChannels);
-    audio.setSampleRate(sampleRateHz);
-    
-    if(numChannels == 2) {
-        for(auto& x : audioChunks) {
-            for(auto i = 0; i < x.second.size(); i+=2) {
-                audio.samples[0].push_back(x.second[i]);
-                audio.samples[1].push_back(x.second[i+1]);
-            }
-        }
-    }
-    else if(numChannels == 1) {
-        for(auto& x : audioChunks) {
-            for(auto i = 0; i < x.second.size(); i++)
-                audio.samples[0].push_back(x.second[i]);
-        }
-    }
-    
-    audio.save(outputPath);
-}
+// This example produces raw video output to stdout. The program reads frames
+// from your input file (via motioncam::Decoder) and writes each frame’s raw
+// data (10-bit stored in a 16-bit container) consecutively. You can then pipe
+// this binary output into ffmpeg to encode it, for example, as ProRes.
 
-void writeDng(
-    const std::string& outputPath,
-    const std::vector<uint16_t>& data,
-    const nlohmann::json& metadata,
-    const nlohmann::json& containerMetadata)
-{
-    const unsigned int width = metadata["width"];
-    const unsigned int height = metadata["height"];
-    
-    std::vector<double> asShotNeutral = metadata["asShotNeutral"];
-
-    std::vector<uint16_t> blackLevel = containerMetadata["blackLevel"];
-    double whiteLevel = containerMetadata["whiteLevel"];
-    std::string sensorArrangement = containerMetadata["sensorArrangment"];
-    std::vector<double> colorMatrix1 = containerMetadata["colorMatrix1"];
-    std::vector<double> colorMatrix2 = containerMetadata["colorMatrix2"];
-    std::vector<double> forwardMatrix1 = containerMetadata["forwardMatrix1"];
-    std::vector<double> forwardMatrix2 = containerMetadata["forwardMatrix2"];
-
-    // Create first frame
-    tinydngwriter::DNGImage dng;
-
-    dng.SetBigEndian(false);
-    dng.SetDNGVersion(0, 0, 4, 1);
-    dng.SetDNGBackwardVersion(0, 0, 1, 1);
-    dng.SetImageData(reinterpret_cast<const unsigned char*>(data.data()), data.size());
-    dng.SetImageWidth(width);
-    dng.SetImageLength(height);
-    dng.SetPlanarConfig(tinydngwriter::PLANARCONFIG_CONTIG);
-    dng.SetPhotometric(tinydngwriter::PHOTOMETRIC_CFA);
-    dng.SetRowsPerStrip(height);
-    dng.SetSamplesPerPixel(1);
-    dng.SetCFARepeatPatternDim(2, 2);
-    
-    dng.SetBlackLevelRepeatDim(2, 2);
-    dng.SetBlackLevel(4, blackLevel.data());
-    dng.SetWhiteLevelRational(1, &whiteLevel);
-
-    std::vector<uint8_t> cfa;
-    
-    if(sensorArrangement == "rggb")
-        cfa = { 0, 1, 1, 2 };
-    else if(sensorArrangement == "bggr")
-        cfa = { 2, 1, 1, 0 };
-    else if(sensorArrangement == "grbg")
-        cfa = { 1, 0, 2, 1 };
-    else if(sensorArrangement == "gbrg")
-        cfa = { 1, 2, 0, 1 };
-    else
-        throw std::runtime_error("Invalid sensor arrangement");
-
-    dng.SetCFAPattern(4, cfa.data());
-    
-    // Rectangular
-    dng.SetCFALayout(1);
-
-    const uint16_t bps[1] = { 16 };
-    dng.SetBitsPerSample(1, bps);
-    
-    dng.SetColorMatrix1(3, colorMatrix1.data());
-    dng.SetColorMatrix2(3, colorMatrix2.data());
-
-    dng.SetForwardMatrix1(3, forwardMatrix1.data());
-    dng.SetForwardMatrix2(3, forwardMatrix2.data());
-    
-    dng.SetAsShotNeutral(3, asShotNeutral.data());
-    
-    const uint32_t activeArea[4] = { 0, 0, height, width };
-    dng.SetActiveArea(&activeArea[0]);
-
-    // Write DNG
-    std::string err;
-    tinydngwriter::DNGWriter writer(false);
-
-    writer.AddImage(&dng);
-
-    writer.WriteToFile(outputPath.c_str(), &err);
-}
-
-int main(int argc, const char * argv[]) {
-    if(argc < 2) {
-        std::cout << "Usage: decoder <input file> [-n number of frames to export]" << std::endl;
+// Usage: decoder input_file [-n num_frames]
+int main(int argc, const char* argv[]) {
+    if (argc < 2) {
+        std::cerr << "Usage: decoder input_file [-n num_frames]" << std::endl;
         return -1;
     }
     
     std::string inputPath(argv[1]);
     int endFrame = -1;
-    
-    if(argc > 3) {
-        if(std::string(argv[2]) == "-n")
+    if (argc > 3) {
+        if (std::string(argv[2]) == "-n")
             endFrame = std::stoi(argv[3]);
     }
-
+    
     try {
         motioncam::Decoder d(inputPath);
-        
         auto frames = d.getFrames();
-        auto containerMetadata = d.getContainerMetadata();
-        char path[32];
-
-        std::cout << "Found " << frames.size() << " frames" << std::endl;
         
-        if(endFrame < 0)
+        if (frames.empty()) {
+            std::cerr << "No frames found in input file." << std::endl;
+            return -1;
+        }
+        
+        // If no frame limit was provided, output them all.
+        if (endFrame < 0)
             endFrame = static_cast<int>(frames.size());
-        
-        //
-        // Write audio
-        //
-        
-        std::vector<motioncam::AudioChunk> audioChunks;
-        
-        d.loadAudio(audioChunks);
-        
-        writeAudio("audio.wav", d.audioSampleRateHz(), d.numAudioChannels(), audioChunks);
-        
-        //
-        // Write video
-        //
+        else
+            endFrame = std::min(static_cast<int>(frames.size()), endFrame);
         
         std::vector<uint16_t> data;
         nlohmann::json metadata;
         
-        endFrame = std::min(static_cast<int>(frames.size()), std::max(0, endFrame));
+        // On Windows, set stdout to binary mode:
+        #ifdef _WIN32
+            _setmode(_fileno(stdout), _O_BINARY);
+        #endif
+
+        // Load the first frame to get image dimensions.
+        d.loadFrame(frames[0], data, metadata);
+        unsigned int width  = metadata["width"];
+        unsigned int height = metadata["height"];
         
-        for(int i = 0; i < endFrame; i++) {
+        // For this example, we assume that each sample is stored in a 16-bit word,
+        // even though only 10 bits per sample carry image data.
+        const size_t frameSize = width * height * sizeof(uint16_t);
+        
+        // Write out the first frame.
+        std::cout.write(reinterpret_cast<const char*>(data.data()), frameSize);
+        
+        // Write the remaining frames.
+        for (int i = 1; i < endFrame; i++) {
             d.loadFrame(frames[i], data, metadata);
-                        
-            std::snprintf(path, sizeof(path), "frame_%06d.dng", i);
-            
-            std::cout << "Writing " << path << std::endl;
-            
-            writeDng(std::string(path), data, metadata, containerMetadata);
+            if (data.size() * sizeof(uint16_t) != frameSize) {
+                throw std::runtime_error("Frame size mismatch. Aborting.");
+            }
+            std::cout.write(reinterpret_cast<const char*>(data.data()), frameSize);
         }
+        
+        std::cout.flush();
     }
-    catch(motioncam::MotionCamException& e) {
-        std::cerr << "Error: " << e.what( )<< std::endl;
+    catch (motioncam::MotionCamException& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return -1;
+    }
+    catch (std::exception& ex) {
+        std::cerr << "Unexpected error: " << ex.what() << std::endl;
         return -1;
     }
     
