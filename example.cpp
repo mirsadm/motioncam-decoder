@@ -50,25 +50,28 @@ int main(int argc, const char *argv[])
 
         std::vector<uint16_t> data;
         nlohmann::json metadata;
+        ;
 
         // Load the first frame to get image dimensions.
         d.loadFrame(frames[0], data, metadata);
+        nlohmann::json containerMetadata = d.getContainerMetadata();
         unsigned int width = metadata["width"];
         unsigned int height = metadata["height"];
-
+        
         // For this example, we assume that each sample is stored in a 16-bit word,
         // even though only 10 bits per sample initially carry image data.
         // After scaling, every pixel will use the full 16-bit dynamic range.
         const size_t numPixels = width * height;
         const size_t frameSize = numPixels * sizeof(uint16_t);
-
+        
         // Scale the 10-bit values (range 0-1023) to 16-bit (range 0-65535).
         for (size_t i = 0; i < data.size(); i++)
         {
             // Multiply by 65535 and add half the divisor (511) for rounding, then divide by 1023.
             data[i] = static_cast<uint16_t>((data[i] * 65535 + 511) / 1023);
         }
-
+        // throw std::runtime_error(containerMetadata.dump());
+        
         // Write out the first frame.
         std::cout.write(reinterpret_cast<const char *>(data.data()), frameSize);
 
