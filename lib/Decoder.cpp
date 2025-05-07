@@ -17,6 +17,7 @@
 #endif
 
 namespace motioncam {
+    constexpr int MOTIONCAM_COMPRESSION_TYPE_LEGACY = 6;
     constexpr int MOTIONCAM_COMPRESSION_TYPE = 7;
 
     Decoder::Decoder(FILE* file) : mFile(file) {
@@ -159,16 +160,22 @@ namespace motioncam {
         const int width = outMetadata["width"];
         const int height = outMetadata["height"];
         const int compressionType = outMetadata["compressionType"];
-        
-        if(compressionType != MOTIONCAM_COMPRESSION_TYPE)
-            throw IOException("Invalid compression type");
-            
+                    
         // Decompress the buffer
         const size_t outputSizeBytes = sizeof(uint16_t) * width*height;
         outData.resize(outputSizeBytes);
         
-        if(raw::Decode(outData.data(), width, height, mTmpBuffer.data(), mTmpBuffer.size()) <= 0)
-            throw IOException("Failed to uncompress frame");
+        if(compressionType == MOTIONCAM_COMPRESSION_TYPE) {
+            if(raw::Decode(outData.data(), width, height, mTmpBuffer.data(), mTmpBuffer.size()) <= 0)
+                throw IOException("Failed to uncompress frame");
+        }
+        else if(compressionType == MOTIONCAM_COMPRESSION_TYPE_LEGACY) {
+            if(raw::DecodeLegacy(outData.data(), width, height, mTmpBuffer.data(), mTmpBuffer.size()) <= 0)
+                throw IOException("Failed to uncompress legacy frame");
+        }
+        else {
+            throw IOException("Invalid compression type");
+        }
     }
 
     void Decoder::readIndex() {
