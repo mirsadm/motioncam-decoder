@@ -32,6 +32,13 @@ namespace motioncam {
             const int height,
             const uint8_t* input,
             const size_t len);
+            
+        size_t DecodeLegacy(
+            uint16_t* output,
+            const int width,
+            const int height,
+            const uint8_t* input,
+            const size_t len);
     }
 }
 
