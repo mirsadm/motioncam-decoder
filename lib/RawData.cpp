@@ -2,7 +2,8 @@
 #include <vector>
 #include <cstring>
 
-#include <simde/arm/neon.h>
+#include <simde/x86/sse2.h>
+#include <simde/x86/sse4.1.h>
 
 #if defined(__GNUC__)
 #  define INLINE  __attribute__((always_inline))
@@ -44,8 +45,8 @@ namespace motioncam {
     };
 
     struct UInt16x8 {
-        const simde_uint16x8_t d;
-        
+        const simde__m128i d;
+
         UInt16x8(
             const uint16_t p0,
             const uint16_t p1,
@@ -55,49 +56,52 @@ namespace motioncam {
             const uint16_t p5,
             const uint16_t p6,
             const uint16_t p7) :
-                d{ p0, p1, p2, p3, p4, p5, p6, p7 }
+            d{ simde_mm_set_epi16(p7, p6, p5, p4, p3, p2, p1, p0) }
         {
         }
 
-        UInt16x8(const simde_uint16x8_t& src) : d{src}
+        UInt16x8(const simde__m128i& src) : d{ src }
         {
         }
 
-        UInt16x8(const uint16_t val) : d{val, val, val, val, val, val, val, val}
+        UInt16x8(const uint16_t val) : d{ simde_mm_set1_epi16(val) }
         {
         }
-        
+
         INLINE
         UInt16x8 operator&(const UInt16x8& rhs) const {
-            return UInt16x8(simde_vandq_u16(d, rhs.d));
+            return UInt16x8(simde_mm_and_si128(d, rhs.d));
         }
 
         INLINE
         UInt16x8 operator|(const UInt16x8& rhs) const {
-            return UInt16x8(simde_vorrq_u16(d, rhs.d));
+            return UInt16x8(simde_mm_or_si128(d, rhs.d));
         }
-        
+
         INLINE
         UInt16x8 operator<<(const int16_t n) const {
-            return UInt16x8(simde_vshlq_u16(d, simde_vdupq_n_s16(n)));
+            simde__m128i shift = simde_mm_set_epi64x(0, n);
+            return UInt16x8(simde_mm_sll_epi16(d, shift));
         }
-        
+
         INLINE
         UInt16x8 operator>>(const int16_t n) const {
-            return UInt16x8(simde_vshlq_u16(d, simde_vdupq_n_s16(-n)));
+            simde__m128i shift = simde_mm_set_epi64x(0, n);
+            return UInt16x8(simde_mm_srl_epi16(d, shift));
         }
     };
 
     INLINE
     UInt16x8 Load(const uint8_t* src) {
-        return UInt16x8(simde_vmovl_u8(simde_vld1_u8(src)));
+        // Load 8 bytes and zero-extend to 16 bits per element
+        simde__m128i temp = simde_mm_loadl_epi64((const simde__m128i*)src);
+        return UInt16x8(simde_mm_cvtepu8_epi16(temp));
     }
 
     INLINE
-    void Store(uint16_t *RESTRICT dst, const UInt16x8& src) {
-        simde_vst1q_u16(dst, src.d);
+    void Store(uint16_t* RESTRICT dst, const UInt16x8& src) {
+        simde_mm_storeu_si128((simde__m128i*)dst, src.d);
     }
-
 
     INLINE
     void DecodeHeader(uint8_t& bits, uint16_t& reference, const uint8_t* input) {
