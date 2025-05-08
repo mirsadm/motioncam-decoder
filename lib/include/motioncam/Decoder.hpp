@@ -38,13 +38,18 @@ namespace motioncam {
         IOException(const std::string& error) : MotionCamException(error) {}
     };
 
+    class AudioChunkLoader {
+        public:
+            virtual bool next(AudioChunk& output) = 0;
+    };
+    
     class Decoder {
     public:
         Decoder(const std::string& path);
         Decoder(FILE* file);
         
         ~Decoder();
-        
+                
         // Get container metadata
         const nlohmann::json& getContainerMetadata() const;
         
@@ -63,6 +68,9 @@ namespace motioncam {
         // Load all audio chunks.
         void loadAudio(std::vector<AudioChunk>& outAudioChunks);
         
+        // Load audio in chunks
+        AudioChunkLoader& loadAudio() const;
+        
     private:
         void init();
         void read(void* data, size_t size, size_t items=1) const;
@@ -79,6 +87,7 @@ namespace motioncam {
         std::vector<Timestamp> mFrameList;
         nlohmann::json mMetadata;
         std::vector<uint8_t> mTmpBuffer;
+        std::unique_ptr<AudioChunkLoader> mAudioLoader;
     };
 } // namespace motioncam
 

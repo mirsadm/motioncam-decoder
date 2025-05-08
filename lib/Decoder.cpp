@@ -20,6 +20,80 @@ namespace motioncam {
     constexpr int MOTIONCAM_COMPRESSION_TYPE_LEGACY = 6;
     constexpr int MOTIONCAM_COMPRESSION_TYPE = 7;
 
+    namespace {
+        class AudioChunkLoaderImpl : public AudioChunkLoader {
+            public:
+                AudioChunkLoaderImpl(FILE* f, const std::vector<BufferOffset>& offsets);
+                bool next(AudioChunk& output);
+                
+            private:
+                FILE* mFile;
+                const std::vector<BufferOffset>& mOffsets;
+                
+                size_t mIdx;
+        };
+    
+        void read(FILE* f, void* data, size_t size, size_t items=1) {
+            if(std::fread(data, size, items, f) != items) {
+                throw IOException("Failed to read data");
+            }
+        }
+    
+        bool loadAudioChunk(FILE* f, const BufferOffset& o, AudioChunk& outChunk) {
+            if(FSEEK(f, o.offset, SEEK_SET) != 0)
+                return false;
+            
+            // Get audio data header
+            Item audioDataItem{};
+            read(f, &audioDataItem, sizeof(Item));
+            
+            if(audioDataItem.type != Type::AUDIO_DATA)
+                throw IOException("Invalid audio data");
+            
+            // Read into temporary buffer
+            std::vector<int16_t> tmp;
+
+            tmp.resize((audioDataItem.size + 1) / 2);
+            read(f, (void*)tmp.data(), audioDataItem.size);
+
+            // Metadata should follow (this was added later so some files may not have it)
+            Item audioMetadataItem{};
+            read(f, &audioMetadataItem, sizeof(Item));
+            
+            Timestamp audioTimestamp = -1;
+            
+            if(audioMetadataItem.type == Type::AUDIO_DATA_METADATA) {
+                AudioMetadata metadata;
+                
+                read(f, &metadata, sizeof(AudioMetadata));
+                audioTimestamp = metadata.timestampNs;
+            }
+        
+            outChunk = std::make_pair(audioTimestamp, std::move(tmp));
+            
+            return true;
+        }
+    }
+    //
+    
+    AudioChunkLoaderImpl::AudioChunkLoaderImpl(FILE* f, const std::vector<BufferOffset>& offsets) :
+        mFile(f), mOffsets(offsets), mIdx(0) {
+    }
+    
+    bool AudioChunkLoaderImpl::next(AudioChunk& output) {
+        if(mIdx >= mOffsets.size())
+            return false;
+        
+        if(!loadAudioChunk(mFile, mOffsets[mIdx], output)) {
+            return false;
+        }
+        
+        ++mIdx;
+        return true;
+    }
+    
+    //
+
     Decoder::Decoder(FILE* file) : mFile(file) {
         if(!mFile)
             throw IOException("Invalid file");
@@ -71,6 +145,9 @@ namespace motioncam {
         reindexOffsets();
 
         readExtra();
+        
+        // Create audio loader
+        mAudioLoader = std::make_unique<AudioChunkLoaderImpl>(mFile, mAudioOffsets);
     }
     
     const std::vector<Timestamp>& Decoder::getFrames() const {
@@ -91,38 +168,17 @@ namespace motioncam {
     
     void Decoder::loadAudio(std::vector<AudioChunk>& outAudioChunks) {
         for(const auto& o : mAudioOffsets) {
-            if(FSEEK(mFile, o.offset, SEEK_SET) != 0)
-                break;
+            AudioChunk chunk;
             
-            // Get audio data header
-            Item audioDataItem{};
-            read(&audioDataItem, sizeof(Item));
-            
-            if(audioDataItem.type != Type::AUDIO_DATA)
-                throw IOException("Invalid audio data");
-            
-            // Read into temporary buffer
-            std::vector<int16_t> tmp;
+            if(!loadAudioChunk(mFile, o, chunk))
+                continue;
 
-            tmp.resize((audioDataItem.size + 1) / 2);
-            read((void*)tmp.data(), audioDataItem.size);
-
-            // Metadata should follow (this was added later so some files may not have it)
-            Item audioMetadataItem{};
-            read(&audioMetadataItem, sizeof(Item));
-            
-            Timestamp audioTimestamp = -1;
-            
-            if(audioMetadataItem.type == Type::AUDIO_DATA_METADATA) {
-                AudioMetadata metadata;
-                
-                read(&metadata, sizeof(AudioMetadata));
-                audioTimestamp = metadata.timestampNs;
-            }
-
-            // Add audio chunk
-            outAudioChunks.push_back(std::make_pair(audioTimestamp, std::move(tmp)));
+            outAudioChunks.emplace_back(chunk);
         }
+    }
+    
+    AudioChunkLoader& Decoder::loadAudio() const {
+        return *mAudioLoader;
     }
     
     void Decoder::loadFrame(const Timestamp timestamp, std::vector<uint16_t>& outData, nlohmann::json& outMetadata) {
@@ -259,9 +315,7 @@ namespace motioncam {
     }
     
     void Decoder::read(void* data, size_t size, size_t items) const {
-        if(std::fread(data, size, items, mFile) != items) {
-            throw IOException("Failed to read data");
-        }
+        ::motioncam::read(mFile, data, size, items);
     }
 
 } // namespace motioncam
