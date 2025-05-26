@@ -181,7 +181,7 @@ namespace motioncam {
         return *mAudioLoader;
     }
     
-    void Decoder::loadFrame(const Timestamp timestamp, std::vector<uint16_t>& outData, nlohmann::json& outMetadata) {
+    void Decoder::loadFrame(const Timestamp timestamp, std::vector<uint8_t>& outData, nlohmann::json& outMetadata) {
         if(mFrameOffsetMap.find(timestamp) == mFrameOffsetMap.end())
             throw IOException("Frame not found (timestamp: " + std::to_string(timestamp) + ")");
         
@@ -222,11 +222,11 @@ namespace motioncam {
         outData.resize(outputSizeBytes);
         
         if(compressionType == MOTIONCAM_COMPRESSION_TYPE) {
-            if(raw::Decode(outData.data(), width, height, mTmpBuffer.data(), mTmpBuffer.size()) <= 0)
+            if(raw::Decode(reinterpret_cast<uint16_t*>(outData.data()), width, height, mTmpBuffer.data(), mTmpBuffer.size()) <= 0)
                 throw IOException("Failed to uncompress frame");
         }
         else if(compressionType == MOTIONCAM_COMPRESSION_TYPE_LEGACY) {
-            if(raw::DecodeLegacy(outData.data(), width, height, mTmpBuffer.data(), mTmpBuffer.size()) <= 0)
+            if(raw::DecodeLegacy(reinterpret_cast<uint16_t*>(outData.data()), width, height, mTmpBuffer.data(), mTmpBuffer.size()) <= 0)
                 throw IOException("Failed to uncompress legacy frame");
         }
         else {
