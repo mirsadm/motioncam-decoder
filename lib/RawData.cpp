@@ -1,6 +1,7 @@
 #include <motioncam/RawData.hpp>
 #include <vector>
 #include <cstring>
+#include <cmath>
 
 #include <simde/x86/sse2.h>
 #include <simde/x86/sse4.1.h>
