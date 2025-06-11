@@ -20,10 +20,6 @@
 #include <stddef.h>
 #include <cstdint>
 
-namespace BS {
-    class thread_pool;
-}
-
 namespace motioncam {
     namespace raw {
         size_t Decode(

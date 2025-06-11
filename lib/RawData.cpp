@@ -6,15 +6,14 @@
 #include <simde/x86/sse4.1.h>
 
 #if defined(__GNUC__)
-#  define INLINE  __attribute__((always_inline))
 #  define RESTRICT __restrict__
 #elif defined(_MSC_VER)
-#  define INLINE __forceinline
 #  define RESTRICT __restrict
 #else
-#  define INLINE
 #  define RESTRICT
 #endif
+
+#define INLINE inline
 
 namespace motioncam {
     namespace raw {
