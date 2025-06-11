@@ -54,7 +54,7 @@ void writeAudio(
 
 void writeDng(
     const std::string& outputPath,
-    const std::vector<uint16_t>& data,
+    const std::vector<uint8_t>& data,
     const nlohmann::json& metadata,
     const nlohmann::json& containerMetadata)
 {
@@ -179,7 +179,7 @@ int main(int argc, const char * argv[]) {
         // Write video
         //
         
-        std::vector<uint16_t> data;
+        std::vector<uint8_t> data;
         nlohmann::json metadata;
         
         endFrame = std::min(static_cast<int>(frames.size()), std::max(0, endFrame));
