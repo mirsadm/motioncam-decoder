@@ -1,6 +1,5 @@
 #include <motioncam/Decoder.hpp>
 #include <motioncam/RawData.hpp>
-
 #include <cstdio>
 #include <cstring>
 
@@ -112,7 +111,7 @@ namespace motioncam {
         if(mFile)
             std::fclose(mFile);
     }
-    
+
     void Decoder::init() {
         Header header{};
         
@@ -182,14 +181,15 @@ namespace motioncam {
     }
     
     void Decoder::loadFrame(const Timestamp timestamp, std::vector<uint8_t>& outData, nlohmann::json& outMetadata) {
+
         if(mFrameOffsetMap.find(timestamp) == mFrameOffsetMap.end())
             throw IOException("Frame not found (timestamp: " + std::to_string(timestamp) + ")");
-        
+
         int64_t offset = mFrameOffsetMap.at(timestamp).offset;
-        
+
         if(FSEEK(mFile, offset, SEEK_SET) != 0)
             throw IOException("Invalid offset");
-        
+
         Item bufferItem{};
         read(&bufferItem, sizeof(Item));
 
@@ -199,28 +199,28 @@ namespace motioncam {
         mTmpBuffer.resize(bufferItem.size);
 
         read(mTmpBuffer.data(), bufferItem.size);
-                
+
         // Get metadata
         Item metadataItem{};
         read(&metadataItem, sizeof(Item));
-        
+
         if(metadataItem.type != Type::METADATA)
             throw IOException("Invalid metadata");
-        
+
         std::vector<uint8_t> metadataJson(metadataItem.size);
         read(metadataJson.data(), metadataItem.size);
-        
+
         std::string metadataString = std::string(metadataJson.begin(), metadataJson.end());
-        outMetadata = nlohmann::json::parse(metadataString);        
-        
+        outMetadata = nlohmann::json::parse(metadataString);
+
         const int width = outMetadata["width"];
         const int height = outMetadata["height"];
         const int compressionType = outMetadata["compressionType"];
-                    
+
         // Decompress the buffer
         const size_t outputSizeBytes = sizeof(uint16_t) * width*height;
         outData.resize(outputSizeBytes);
-        
+
         if(compressionType == MOTIONCAM_COMPRESSION_TYPE) {
             if(raw::Decode(reinterpret_cast<uint16_t*>(outData.data()), width, height, mTmpBuffer.data(), mTmpBuffer.size()) <= 0)
                 throw IOException("Failed to uncompress frame");
@@ -232,6 +232,38 @@ namespace motioncam {
         else {
             throw IOException("Invalid compression type");
         }
+    }
+
+    void Decoder::loadFrameMetadata(const Timestamp timestamp, nlohmann::json& outMetadata) {
+        if(mFrameOffsetMap.find(timestamp) == mFrameOffsetMap.end())
+            throw IOException("Frame not found (timestamp: " + std::to_string(timestamp) + ")");
+        
+        int64_t offset = mFrameOffsetMap.at(timestamp).offset;
+
+        if(FSEEK(mFile, offset, SEEK_SET) != 0)
+            throw IOException("Invalid offset");
+
+        Item bufferItem{};
+        read(&bufferItem, sizeof(Item));
+
+        if(bufferItem.type != Type::BUFFER)
+            throw IOException("Invalid buffer type");
+
+        if(FSEEK(mFile, bufferItem.size, SEEK_CUR) != 0)
+            throw IOException("Failed to skip buffer data");
+
+        // Get metadata
+        Item metadataItem{};
+        read(&metadataItem, sizeof(Item));
+        
+        if(metadataItem.type != Type::METADATA)
+            throw IOException("Invalid metadata");
+        
+        std::vector<uint8_t> metadataJson(metadataItem.size);
+        read(metadataJson.data(), metadataItem.size);
+        
+        std::string metadataString = std::string(metadataJson.begin(), metadataJson.end());
+        outMetadata = nlohmann::json::parse(metadataString);       
     }
 
     void Decoder::readIndex() {

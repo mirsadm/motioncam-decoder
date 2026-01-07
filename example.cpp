@@ -186,11 +186,11 @@ int main(int argc, const char * argv[]) {
         
         for(int i = 0; i < endFrame; i++) {
             d.loadFrame(frames[i], data, metadata);
-                        
+
             std::snprintf(path, sizeof(path), "frame_%06d.dng", i);
-            
+
             std::cout << "Writing " << path << std::endl;
-            
+
             writeDng(std::string(path), data, metadata, containerMetadata);
         }
     }

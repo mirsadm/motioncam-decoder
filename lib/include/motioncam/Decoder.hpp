@@ -41,16 +41,15 @@ namespace motioncam {
     class AudioChunkLoader {
         public:
             virtual bool next(AudioChunk& output) = 0;
-            virtual ~AudioChunkLoader() = default;
     };
     
     class Decoder {
     public:
         Decoder(const std::string& path);
         Decoder(FILE* file);
-        
+
         ~Decoder();
-                
+
         // Get container metadata
         const nlohmann::json& getContainerMetadata() const;
         
@@ -59,6 +58,9 @@ namespace motioncam {
         
         // Load a single frame and its metadata.
         void loadFrame(const Timestamp timestamp, std::vector<uint8_t>& outData, nlohmann::json& outMetadata);
+
+        // Load metadata of a single frame.
+        void loadFrameMetadata(const Timestamp timestamp, nlohmann::json& outMetadata);
         
         // Audio sample rate
         int audioSampleRateHz() const;
