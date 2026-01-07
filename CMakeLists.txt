@@ -13,12 +13,16 @@ include_directories(motioncam_decoder lib/include thirdparty)
 add_library(motioncam_decoder lib/Decoder.cpp lib/RawData.cpp lib/RawData_Legacy.cpp)
 set_property(TARGET motioncam_decoder PROPERTY POSITION_INDEPENDENT_CODE ON)
 
+if (MSVC)
+    target_compile_options(motioncam_decoder PRIVATE /utf-8)
+endif()
+
 add_executable(example example.cpp)
 
 target_link_libraries(example PRIVATE motioncam_decoder)
 
 if (MSVC)
-    add_compile_options(/W4 /WX)
+    add_compile_options(/W4 /WX /utf-8)
 else()
     add_compile_options(-Wall -Werror -O3)
 endif()

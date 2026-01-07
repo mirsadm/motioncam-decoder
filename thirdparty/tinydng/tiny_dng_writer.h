@@ -109,6 +109,8 @@ typedef enum {
   TIFFTAG_COMPRESSION = 259,
   TIFFTAG_PHOTOMETRIC = 262,
   TIFFTAG_IMAGEDESCRIPTION = 270,
+  TIFFTAG_MAKE = 271,
+  TIFFTAG_CAMERA_MODEL_NAME = 272,
   TIFFTAG_STRIP_OFFSET = 273,
   TIFFTAG_SAMPLES_PER_PIXEL = 277,
   TIFFTAG_ROWS_PER_STRIP = 278,
@@ -147,6 +149,7 @@ typedef enum {
   TIFFTAG_ANALOG_BALANCE = 50727,
   TIFFTAG_AS_SHOT_NEUTRAL = 50728,
   TIFFTAG_AS_SHOT_WHITE_XY = 50729,
+  TIFFTAG_BASELINE_EXPOSURE = 50730, // per file exposure compensation offset recognized by davinci resolve
   TIFFTAG_CALIBRATION_ILLUMINANT1 = 50778,
   TIFFTAG_CALIBRATION_ILLUMINANT2 = 50779,
   TIFFTAG_EXTRA_CAMERA_PROFILES = 50933,
@@ -156,10 +159,19 @@ typedef enum {
   TIFFTAG_ACTIVE_AREA = 50829,
   TIFFTAG_FORWARD_MATRIX1 = 50964,
   TIFFTAG_FORWARD_MATRIX2 = 50965,
+  TIFFTAG_LINEARIZATION_TABLE = 50712,
+
+  // Noise profile
+  TIFFTAG_NOISE_PROFILE = 51041,
 
   // CinemaDNG specific
   TIFFTAG_TIMECODE = 51043,
-  TIFFTAG_FPS = 51044
+  TIFFTAG_FPS = 51044,
+
+  // Opcode Lists
+  TIFFTAG_OPCODE_LIST1 = 51008,
+  TIFFTAG_OPCODE_LIST2 = 51009,
+  TIFFTAG_OPCODE_LIST3 = 51022
 } Tag;
 
 // SUBFILETYPE(bit field)
@@ -203,6 +215,11 @@ static const int SAMPLEFORMAT_UINT = 1;  // Default
 static const int SAMPLEFORMAT_INT = 2;
 static const int SAMPLEFORMAT_IEEEFP = 3;  // floating point
 
+// Opcode IDs
+static const int OPCODE_WARP_RECTILINEAR = 1;
+static const int OPCODE_FIX_BAD_PIXELS_LIST = 5;
+static const int OPCODE_GAIN_MAP = 9;
+
 struct IFDTag {
   unsigned short tag;
   unsigned short type;
@@ -210,6 +227,65 @@ struct IFDTag {
   unsigned int offset_or_value;
 };
 // 12 bytes.
+
+// Opcode structures
+struct BadPixel {
+  unsigned int row;
+  unsigned int column;
+};
+
+struct BadRect {
+  unsigned int top;
+  unsigned int left;
+  unsigned int bottom;
+  unsigned int right;
+};
+
+struct WarpRectilinearParams {
+  unsigned int num_coeff_sets;
+  std::vector<double> kr0, kr1, kr2, kr3;  // Radial coefficients
+  std::vector<double> kt0, kt1;            // Tangential coefficients
+  double cx_hat, cy_hat;                   // Normalized optical center
+};
+
+struct FixBadPixelsParams {
+  unsigned int bayer_phase;
+  std::vector<BadPixel> bad_pixels;
+  std::vector<BadRect> bad_rects;
+};
+
+struct GainMapParams {
+  unsigned int top, left, bottom, right;
+  unsigned int plane, planes;
+  unsigned int row_pitch, col_pitch;
+  unsigned int map_points_v, map_points_h;
+  double map_spacing_v, map_spacing_h;
+  double map_origin_v, map_origin_h;
+  unsigned int map_planes;
+  std::vector<float> gain_data;
+};
+
+class OpcodeList {
+public:
+  OpcodeList() = default;
+  
+  void AddWarpRectilinear(const WarpRectilinearParams& params);
+  void AddFixBadPixelsList(const FixBadPixelsParams& params);
+  void AddGainMap(const GainMapParams& params);
+  
+  std::vector<unsigned char> Serialize() const;
+  bool IsEmpty() const { return opcodes_.empty(); }
+
+private:
+  struct Opcode {
+    unsigned int id;
+    unsigned int version[4];  // DNG version
+    unsigned int flags;
+    std::vector<unsigned char> data;
+  };
+  
+  std::vector<Opcode> opcodes_;
+};
 
 class DNGImage {
  public:
@@ -261,6 +337,18 @@ class DNGImage {
   /// Currently we limit to 1024*1024 chars at max.
   ///
   bool SetUniqueCameraModel(const std::string &ascii);
+
+  ///
+  /// Set camera make (manufacturer) string.
+  /// Currently we limit to 1024*1024 chars at max.
+  ///
+  bool SetMake(const std::string &ascii);
+
+  ///
+  /// Set camera model name string.
+  /// Currently we limit to 1024*1024 chars at max.
+  ///
+  bool SetCameraModelName(const std::string &ascii);
 
   ///
   /// Set software description(string).
@@ -319,6 +407,36 @@ class DNGImage {
 
   /// Specify the the selected white balance at time of capture, encoded as x-y chromaticity coordinates.
   bool SetAsShotWhiteXY(const float x, const float y);
+
+  /// Set baseline exposure value in EV units
+  bool SetBaselineExposure(float value);
+
+  /// Set noise profile (6 double values: noise model parameters for the camera sensor)
+  bool SetNoiseProfile(const double values[6]);
+
+  /// Set linearization table for converting stored values to linear values.
+  /// The table maps stored pixel values to linear values using direct mapping.
+  /// @param[in] table_size Number of entries in the linearization table (should be 2^input_bits)
+  /// @param[in] table_values Array of linear output values (TIFF_SHORT format, 0-65535)
+  bool SetLinearizationTable(const unsigned int table_size, const unsigned short *table_values);
+
+  /// Generate and set linearization table for log-to-linear conversion.
+  /// Creates a direct mapping table from log-encoded values to 16-bit linear values.
+  /// @param[in] input_bits Bit depth of input log data (e.g., 10, 12, 14)
+  /// @param[in] log_base Base of the logarithm (e.g., 2.0 for log2, 10.0 for log10)
+  /// @param[in] black_level Black level in linear space (0-65535)
+  /// @param[in] white_level White level in linear space (0-65535)
+  bool SetLogLinearizationTable(const unsigned int input_bits, const float log_base = 2.0f, 
+                               const unsigned short black_level = 0, const unsigned short white_level = 65535);
+
+  /// Set opcode list 1 (applied to raw image as read from file)
+  bool SetOpcodeList1(const OpcodeList& opcode_list);
+  
+  /// Set opcode list 2 (applied after mapping to linear reference values)
+  bool SetOpcodeList2(const OpcodeList& opcode_list);
+  
+  /// Set opcode list 3 (applied after demosaicing)
+  bool SetOpcodeList3(const OpcodeList& opcode_list);
 
   /// Set image data with packing (take 16-bit values and pack them to input_bpp values).
   bool SetImageDataPacked(const unsigned short *input_buffer, const int input_count, const unsigned int input_bpp, bool big_endian);
@@ -611,6 +729,27 @@ static void Write4(const unsigned int c, std::ostringstream *out,
   }
 
   out->write(reinterpret_cast<const char *>(&value), 4);
+}
+
+static void WriteDouble(const double c, std::ostringstream *out,
+                        const bool swap_endian) {
+  double value = c;
+  if (swap_endian && !IsBigEndian()) {
+    swap8(reinterpret_cast<uint64_t*>(&value));
+  }
+  out->write(reinterpret_cast<const char *>(&value), sizeof(double));
+}
+
+static void WriteFloat(const float c, std::ostringstream *out,
+                       const bool swap_endian) {
+  float value = c;
+  if (swap_endian && !IsBigEndian()) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(float));
+    swap4(&bits);
+    memcpy(&value, &bits, sizeof(float));
+  }
+  out->write(reinterpret_cast<const char *>(&value), sizeof(float));
 }
 
 static bool WriteTIFFTag(const unsigned short tag, const unsigned short type,
@@ -1338,6 +1477,60 @@ bool DNGImage::SetUniqueCameraModel(const std::string &ascii) {
   return true;
 }
 
+bool DNGImage::SetMake(const std::string &ascii) {
+  unsigned int count =
+      static_cast<unsigned int>(ascii.length() + 1);  // +1 for '\0'
+
+  if (count < 2) {
+    // empty string
+    return false;
+  }
+
+  if (count > (1024 * 1024)) {
+    // too large
+    return false;
+  }
+
+  bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_MAKE),
+                          TIFF_ASCII, count,
+                          reinterpret_cast<const unsigned char *>(ascii.data()),
+                          &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetCameraModelName(const std::string &ascii) {
+  unsigned int count =
+      static_cast<unsigned int>(ascii.length() + 1);  // +1 for '\0'
+
+  if (count < 2) {
+    // empty string
+    return false;
+  }
+
+  if (count > (1024 * 1024)) {
+    // too large
+    return false;
+  }
+
+  bool ret = WriteTIFFTag(static_cast<unsigned short>(TIFFTAG_CAMERA_MODEL_NAME),
+                          TIFF_ASCII, count,
+                          reinterpret_cast<const unsigned char *>(ascii.data()),
+                          &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
 bool DNGImage::SetSoftware(const std::string &ascii) {
   unsigned int count =
       static_cast<unsigned int>(ascii.length() + 1);  // +1 for '\0'
@@ -1803,6 +1996,86 @@ bool DNGImage::SetAsShotWhiteXY(const float x, const float y) {
   return true;
 }
 
+bool DNGImage::SetBaselineExposure(float value) {
+  float numerator, denominator;
+  if (FloatToRational(value, &numerator, &denominator) != 0) {
+    // Couldn't represent fp value as integer rational value.
+    return false;
+  }
+
+  int data[2];
+  data[0] = static_cast<int>(numerator);
+  data[1] = static_cast<int>(denominator);
+
+  bool ret = WriteTIFFTag(
+      static_cast<unsigned short>(TIFFTAG_BASELINE_EXPOSURE), TIFF_SRATIONAL, 1,
+      reinterpret_cast<const unsigned char *>(data), &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetNoiseProfile(const double values[6]) {
+  std::vector<double> vs(6);
+  for (size_t i = 0; i < 6; i++) {
+    vs[i] = values[i];
+    if (swap_endian_) {
+      swap8(reinterpret_cast<uint64_t*>(&vs[i]));
+    }
+  }
+
+  bool ret = WriteTIFFTag(
+      static_cast<unsigned short>(TIFFTAG_NOISE_PROFILE), TIFF_DOUBLE, 6,
+      reinterpret_cast<const unsigned char *>(vs.data()), &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetLinearizationTable(const unsigned int table_size, const unsigned short *table_values) {
+  if ((table_values == NULL) || (table_size < 1)) {
+    err_ += "Invalid linearization table parameters.\n";
+    return false;
+  }
+
+  // Validate table size - common sizes are 256, 1024, 4096, 16384, 65536
+  if (table_size > 65536) {
+    err_ += "Linearization table size too large (max 65536 entries).\n";
+    return false;
+  }
+
+  // Create a copy of the table values for endian swapping if needed
+  std::vector<unsigned short> vs(table_size);
+  for (size_t i = 0; i < table_size; i++) {
+    vs[i] = table_values[i];
+    
+    // Swap endian if needed
+    if (swap_endian_) {
+      swap2(&vs[i]);
+    }
+  }
+
+  bool ret = WriteTIFFTag(
+      static_cast<unsigned short>(TIFFTAG_LINEARIZATION_TABLE), TIFF_SHORT, table_size,
+      reinterpret_cast<const unsigned char *>(vs.data()), &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    err_ += "Failed to write linearization table tag.\n";
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
 bool DNGImage::SetImageDataPacked(const unsigned short *input_buffer, const int input_count, const unsigned int input_bpp, bool big_endian)
 {
   if (input_count <= 0) {
@@ -2185,6 +2458,232 @@ bool DNGWriter::WriteToFile(std::ostream& ofs, std::string *err) const {
     ofs.write(reinterpret_cast<const char *>(&next_ifd_offset), 4);
   }
 
+  return true;
+}
+
+// Opcode List implementations
+
+void OpcodeList::AddWarpRectilinear(const WarpRectilinearParams& params) {
+  Opcode opcode;
+  opcode.id = OPCODE_WARP_RECTILINEAR;
+  opcode.version[0] = 1; opcode.version[1] = 3; opcode.version[2] = 0; opcode.version[3] = 0;
+  opcode.flags = 0;
+  
+  std::ostringstream data_stream;
+  
+  // Write parameters (big-endian as per DNG spec for opcode blocks)
+  Write4(params.num_coeff_sets, &data_stream, true);
+  
+  for (size_t i = 0; i < params.num_coeff_sets; i++) {
+    // Write radial coefficients (kr0, kr1, kr2, kr3)
+    double kr0 = i < params.kr0.size() ? params.kr0[i] : 1.0;
+    double kr1 = i < params.kr1.size() ? params.kr1[i] : 0.0;
+    double kr2 = i < params.kr2.size() ? params.kr2[i] : 0.0;
+    double kr3 = i < params.kr3.size() ? params.kr3[i] : 0.0;
+    
+    // Write doubles in big-endian
+    WriteDouble(kr0, &data_stream, true);
+    WriteDouble(kr1, &data_stream, true);
+    WriteDouble(kr2, &data_stream, true);
+    WriteDouble(kr3, &data_stream, true);
+    
+    // Write tangential coefficients (kt0, kt1)
+    double kt0 = i < params.kt0.size() ? params.kt0[i] : 0.0;
+    double kt1 = i < params.kt1.size() ? params.kt1[i] : 0.0;
+    
+    WriteDouble(kt0, &data_stream, true);
+    WriteDouble(kt1, &data_stream, true);
+  }
+  
+  // Write optical center
+  WriteDouble(params.cx_hat, &data_stream, true);
+  WriteDouble(params.cy_hat, &data_stream, true);
+  
+  std::string data_str = data_stream.str();
+  opcode.data.assign(data_str.begin(), data_str.end());
+  
+  opcodes_.push_back(opcode);
+}
+
+void OpcodeList::AddFixBadPixelsList(const FixBadPixelsParams& params) {
+  Opcode opcode;
+  opcode.id = OPCODE_FIX_BAD_PIXELS_LIST;
+  opcode.version[0] = 1; opcode.version[1] = 3; opcode.version[2] = 0; opcode.version[3] = 0;
+  opcode.flags = 0;
+  
+  std::ostringstream data_stream;
+  
+  // Write parameters (big-endian)
+  Write4(params.bayer_phase, &data_stream, true);
+  Write4(static_cast<unsigned int>(params.bad_pixels.size()), &data_stream, true);
+  Write4(static_cast<unsigned int>(params.bad_rects.size()), &data_stream, true);
+  
+  // Write bad pixels
+  for (const auto& pixel : params.bad_pixels) {
+    Write4(pixel.row, &data_stream, true);
+    Write4(pixel.column, &data_stream, true);
+  }
+  
+  // Write bad rectangles
+  for (const auto& rect : params.bad_rects) {
+    Write4(rect.top, &data_stream, true);
+    Write4(rect.left, &data_stream, true);
+    Write4(rect.bottom, &data_stream, true);
+    Write4(rect.right, &data_stream, true);
+  }
+  
+  std::string data_str = data_stream.str();
+  opcode.data.assign(data_str.begin(), data_str.end());
+  
+  opcodes_.push_back(opcode);
+}
+
+void OpcodeList::AddGainMap(const GainMapParams& params) {
+  Opcode opcode;
+  opcode.id = OPCODE_GAIN_MAP;
+  // DNG version 1.3.0.0
+  opcode.version[0] = 1; opcode.version[1] = 3; opcode.version[2] = 0; opcode.version[3] = 0;
+  opcode.flags = 0;
+  
+  std::ostringstream data_stream;
+  
+  // Write area of interest (LONG: top, left, bottom, right)
+  Write4(params.top, &data_stream, true);
+  Write4(params.left, &data_stream, true);
+  Write4(params.bottom, &data_stream, true);
+  Write4(params.right, &data_stream, true);
+  
+  // Write plane info (LONG: plane, planes)
+  Write4(params.plane, &data_stream, true);
+  Write4(params.planes, &data_stream, true);
+  
+  // Write pitch (LONG: row_pitch, col_pitch)
+  Write4(params.row_pitch, &data_stream, true);
+  Write4(params.col_pitch, &data_stream, true);
+  
+  // Write map dimensions (LONG: map_points_v, map_points_h)
+  Write4(params.map_points_v, &data_stream, true);
+  Write4(params.map_points_h, &data_stream, true);
+  
+  // Write spacing (DOUBLE: map_spacing_v, map_spacing_h)
+  WriteDouble(params.map_spacing_v, &data_stream, true);
+  WriteDouble(params.map_spacing_h, &data_stream, true);
+  
+  // Write origin (DOUBLE: map_origin_v, map_origin_h)
+  WriteDouble(params.map_origin_v, &data_stream, true);
+  WriteDouble(params.map_origin_h, &data_stream, true);
+  
+  // Write map planes (LONG: map_planes)
+  Write4(params.map_planes, &data_stream, true);
+  
+  // Write gain map data (FLOAT array)
+  // For each MapPointsV, for each MapPointsH, for each MapPlanes: MapGain (FLOAT)
+  size_t expected_size = params.map_points_v * params.map_points_h * params.map_planes;
+  for (size_t i = 0; i < params.gain_data.size() && i < expected_size; i++) {
+    WriteFloat(params.gain_data[i], &data_stream, true);
+  }
+  
+  std::string data_str = data_stream.str();
+  opcode.data.assign(data_str.begin(), data_str.end());
+  
+  opcodes_.push_back(opcode);
+}
+
+std::vector<unsigned char> OpcodeList::Serialize() const {
+  if (opcodes_.empty()) {
+    return std::vector<unsigned char>();
+  }
+  
+  std::ostringstream stream;
+  
+  // Write opcode count (big-endian, 32-bit uint)
+  Write4(static_cast<unsigned int>(opcodes_.size()), &stream, true);
+  
+  for (const auto& opcode : opcodes_) {
+    // Write opcode ID (32-bit uint)
+    Write4(opcode.id, &stream, true);
+    
+    // Write DNG version as single 32-bit value (e.g., 0x01030000 for version 1.3.0.0)
+    unsigned int dng_version = (opcode.version[0] << 24) | (opcode.version[1] << 16) | 
+                               (opcode.version[2] << 8) | opcode.version[3];
+    Write4(dng_version, &stream, true);
+    
+    // Write flags (32-bit uint)
+    Write4(opcode.flags, &stream, true);
+    
+    // Write data size (32-bit uint)
+    Write4(static_cast<unsigned int>(opcode.data.size()), &stream, true);
+    
+    // Write opcode data
+    stream.write(reinterpret_cast<const char*>(opcode.data.data()), opcode.data.size());
+  }
+  
+  std::string data_str = stream.str();
+  return std::vector<unsigned char>(data_str.begin(), data_str.end());
+}
+
+// DNGImage opcode list methods
+
+bool DNGImage::SetOpcodeList1(const OpcodeList& opcode_list) {
+  if (opcode_list.IsEmpty()) {
+    return true; // Empty opcode list is valid
+  }
+  
+  std::vector<unsigned char> data = opcode_list.Serialize();
+  
+  bool ret = WriteTIFFTag(
+      static_cast<unsigned short>(TIFFTAG_OPCODE_LIST1), TIFF_UNDEFINED, 
+      static_cast<unsigned int>(data.size()),
+      data.data(), &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    err_ += "Failed to write OpcodeList1 tag.\n";
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetOpcodeList2(const OpcodeList& opcode_list) {
+  if (opcode_list.IsEmpty()) {
+    return true; // Empty opcode list is valid
+  }
+  
+  std::vector<unsigned char> data = opcode_list.Serialize();
+  
+  bool ret = WriteTIFFTag(
+      static_cast<unsigned short>(TIFFTAG_OPCODE_LIST2), TIFF_UNDEFINED, 
+      static_cast<unsigned int>(data.size()),
+      data.data(), &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    err_ += "Failed to write OpcodeList2 tag.\n";
+    return false;
+  }
+
+  num_fields_++;
+  return true;
+}
+
+bool DNGImage::SetOpcodeList3(const OpcodeList& opcode_list) {
+  if (opcode_list.IsEmpty()) {
+    return true; // Empty opcode list is valid
+  }
+  
+  std::vector<unsigned char> data = opcode_list.Serialize();
+  
+  bool ret = WriteTIFFTag(
+      static_cast<unsigned short>(TIFFTAG_OPCODE_LIST3), TIFF_UNDEFINED, 
+      static_cast<unsigned int>(data.size()),
+      data.data(), &ifd_tags_, &data_os_);
+
+  if (!ret) {
+    err_ += "Failed to write OpcodeList3 tag.\n";
+    return false;
+  }
+
+  num_fields_++;
   return true;
 }
 
