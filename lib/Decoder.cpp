@@ -1,11 +1,7 @@
 #include <motioncam/Decoder.hpp>
 #include <motioncam/RawData.hpp>
-#include <spdlog/spdlog.h>
-#include <chrono>
-
 #include <cstdio>
 #include <cstring>
-#include <atomic>
 
 #if defined(_WIN32)
     #define FSEEK _fseeki64
@@ -24,8 +20,6 @@ namespace motioncam {
     constexpr int MOTIONCAM_COMPRESSION_TYPE = 7;
 
     namespace {
-        thread_local std::atomic<uint64_t>* gReadCounter = nullptr;
-
         class AudioChunkLoaderImpl : public AudioChunkLoader {
             public:
                 AudioChunkLoaderImpl(FILE* f, const std::vector<BufferOffset>& offsets);
@@ -41,9 +35,6 @@ namespace motioncam {
         void read(FILE* f, void* data, size_t size, size_t items=1) {
             if(std::fread(data, size, items, f) != items) {
                 throw IOException("Failed to read data");
-            }
-            if (gReadCounter) {
-                gReadCounter->fetch_add(size * items, std::memory_order_relaxed);
             }
         }
     
@@ -121,10 +112,6 @@ namespace motioncam {
             std::fclose(mFile);
     }
 
-    void Decoder::setReadCounter(std::atomic<uint64_t>* counter) {
-        gReadCounter = counter;
-    }
-    
     void Decoder::init() {
         Header header{};
         
@@ -195,17 +182,14 @@ namespace motioncam {
     
     void Decoder::loadFrame(const Timestamp timestamp, std::vector<uint8_t>& outData, nlohmann::json& outMetadata) {
 
-        const auto frameStart = std::chrono::steady_clock::now();
         if(mFrameOffsetMap.find(timestamp) == mFrameOffsetMap.end())
             throw IOException("Frame not found (timestamp: " + std::to_string(timestamp) + ")");
-        
+
         int64_t offset = mFrameOffsetMap.at(timestamp).offset;
-        
+
         if(FSEEK(mFile, offset, SEEK_SET) != 0)
             throw IOException("Invalid offset");
 
-        const auto seekDone = std::chrono::steady_clock::now();
-        
         Item bufferItem{};
         read(&bufferItem, sizeof(Item));
 
@@ -215,32 +199,28 @@ namespace motioncam {
         mTmpBuffer.resize(bufferItem.size);
 
         read(mTmpBuffer.data(), bufferItem.size);
-                
+
         // Get metadata
         Item metadataItem{};
         read(&metadataItem, sizeof(Item));
-        
+
         if(metadataItem.type != Type::METADATA)
             throw IOException("Invalid metadata");
-        
+
         std::vector<uint8_t> metadataJson(metadataItem.size);
         read(metadataJson.data(), metadataItem.size);
-        
+
         std::string metadataString = std::string(metadataJson.begin(), metadataJson.end());
-        outMetadata = nlohmann::json::parse(metadataString);        
-        
+        outMetadata = nlohmann::json::parse(metadataString);
+
         const int width = outMetadata["width"];
         const int height = outMetadata["height"];
         const int compressionType = outMetadata["compressionType"];
 
-        const auto readDone = std::chrono::steady_clock::now();
-                    
         // Decompress the buffer
         const size_t outputSizeBytes = sizeof(uint16_t) * width*height;
         outData.resize(outputSizeBytes);
 
-        const auto decompressStart = std::chrono::steady_clock::now();
-        
         if(compressionType == MOTIONCAM_COMPRESSION_TYPE) {
             if(raw::Decode(reinterpret_cast<uint16_t*>(outData.data()), width, height, mTmpBuffer.data(), mTmpBuffer.size()) <= 0)
                 throw IOException("Failed to uncompress frame");
@@ -252,22 +232,6 @@ namespace motioncam {
         else {
             throw IOException("Invalid compression type");
         }
-
-        const auto decompressDone = std::chrono::steady_clock::now();
-        const auto seekMs = std::chrono::duration_cast<std::chrono::milliseconds>(seekDone - frameStart).count();
-        const auto readMs = std::chrono::duration_cast<std::chrono::milliseconds>(readDone - seekDone).count();
-        const auto decompressMs = std::chrono::duration_cast<std::chrono::milliseconds>(decompressDone - decompressStart).count();
-        const auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(decompressDone - frameStart).count();
-
-        spdlog::warn(
-            "[DECODER] Frame {}: offset={} size={} seek={}ms read={}ms decompress={}ms total={}ms",
-            timestamp,
-            offset,
-            bufferItem.size,
-            seekMs,
-            readMs,
-            decompressMs,
-            totalMs);
     }
 
     void Decoder::loadFrameMetadata(const Timestamp timestamp, nlohmann::json& outMetadata) {
@@ -275,22 +239,19 @@ namespace motioncam {
             throw IOException("Frame not found (timestamp: " + std::to_string(timestamp) + ")");
         
         int64_t offset = mFrameOffsetMap.at(timestamp).offset;
-        
+
         if(FSEEK(mFile, offset, SEEK_SET) != 0)
             throw IOException("Invalid offset");
 
-        const auto seekDone = std::chrono::steady_clock::now();
-        
         Item bufferItem{};
         read(&bufferItem, sizeof(Item));
 
         if(bufferItem.type != Type::BUFFER)
             throw IOException("Invalid buffer type");
 
-        mTmpBuffer.resize(bufferItem.size);
+        if(FSEEK(mFile, bufferItem.size, SEEK_CUR) != 0)
+            throw IOException("Failed to skip buffer data");
 
-        read(mTmpBuffer.data(), bufferItem.size);
-                
         // Get metadata
         Item metadataItem{};
         read(&metadataItem, sizeof(Item));

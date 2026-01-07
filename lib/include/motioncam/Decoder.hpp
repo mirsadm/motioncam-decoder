@@ -23,7 +23,6 @@
 #include <string>
 #include <vector>
 #include <map>
-#include <atomic>
 
 namespace motioncam {
     typedef int64_t Timestamp;
@@ -51,8 +50,6 @@ namespace motioncam {
 
         ~Decoder();
 
-        static void setReadCounter(std::atomic<uint64_t>* counter);
-                
         // Get container metadata
         const nlohmann::json& getContainerMetadata() const;
         

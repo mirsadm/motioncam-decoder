@@ -1,0 +1,4 @@
+C:/Users/Sebastian/Documents/Fuse-2026-vibed/deps/motioncam-decoder/build/CMakeFiles/motioncam_decoder.dir
+C:/Users/Sebastian/Documents/Fuse-2026-vibed/deps/motioncam-decoder/build/CMakeFiles/example.dir
+C:/Users/Sebastian/Documents/Fuse-2026-vibed/deps/motioncam-decoder/build/CMakeFiles/ALL_BUILD.dir
+C:/Users/Sebastian/Documents/Fuse-2026-vibed/deps/motioncam-decoder/build/CMakeFiles/ZERO_CHECK.dir
