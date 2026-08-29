@@ -24,6 +24,10 @@ add_executable(example example.cpp)
 target_link_libraries(example PRIVATE motioncam_decoder)
 
 if (BUILD_TESTING)
+    add_executable(decoder_test tests/DecoderTest.cpp)
+    target_link_libraries(decoder_test PRIVATE motioncam_decoder)
+    add_test(NAME decoder_test COMMAND decoder_test)
+
     add_executable(decoder_gyro_test tests/DecoderGyroTest.cpp)
     target_link_libraries(decoder_gyro_test PRIVATE motioncam_decoder)
     add_test(NAME decoder_gyro_test COMMAND decoder_gyro_test)
