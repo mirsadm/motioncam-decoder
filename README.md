@@ -22,6 +22,20 @@ To extract the first frame and audio from a `.mcraw` file run:
 
 `./example <path to mcraw file> -n 1`
 
+### Embedded gyro data
+
+Recent `.mcraw` files can contain raw gyroscope samples. The timestamps use the
+same nanosecond timeline as frame timestamps, and the axis values are radians per
+second:
+
+```cpp
+motioncam::Decoder decoder("input.mcraw");
+std::vector<motioncam::MotionSample> gyroSamples;
+
+if(decoder.hasGyroData())
+    decoder.loadGyroData(gyroSamples);
+```
+
 
 ## Sample Files
 

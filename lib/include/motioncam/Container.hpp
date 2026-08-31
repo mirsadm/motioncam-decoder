@@ -18,9 +18,12 @@
 #define Container_h
 
 #include <cstdint>
+#include <type_traits>
 
 namespace motioncam {
     const uint32_t INDEX_MAGIC_NUMBER = 0x8A905612;
+    const uint32_t GYRO_DATA_VERSION = 1;
+    const uint32_t GYRO_INDEX_VERSION = 1;
     
     const uint8_t CONTAINER_VERSION = 3;
     const uint8_t CONTAINER_ID[7] = {'M', 'O', 'T', 'I', 'O', 'N', ' '};
@@ -36,13 +39,16 @@ namespace motioncam {
     };
     
     enum class Type : uint32_t {
-        BUFFER_INDEX,
-        BUFFER_INDEX_DATA,
-        BUFFER,
-        METADATA,
-        AUDIO_INDEX,
-        AUDIO_DATA,
-        AUDIO_DATA_METADATA
+        BUFFER_INDEX = 0,
+        BUFFER_INDEX_DATA = 1,
+        BUFFER = 2,
+        METADATA = 3,
+        AUDIO_INDEX = 4,
+        AUDIO_DATA = 5,
+        AUDIO_DATA_METADATA = 6,
+        AUDIO_DATA_F32 = 7,
+        GYRO_INDEX = 8,
+        GYRO_DATA = 9
     };
 
     struct Item {
@@ -68,7 +74,22 @@ namespace motioncam {
 
     struct AudioMetadata {
         int64_t timestampNs;
-    };    
+    };
+
+    struct GyroDataHeader {
+        uint32_t version;
+        uint32_t numSamples;
+    };
+
+    struct GyroIndex {
+        uint32_t version;
+        uint32_t numOffsets;
+    };
+
+    static_assert(sizeof(GyroDataHeader) == 8);
+    static_assert(sizeof(GyroIndex) == 8);
+    static_assert(std::is_trivially_copyable_v<GyroDataHeader>);
+    static_assert(std::is_trivially_copyable_v<GyroIndex>);
 }
 
 #endif /* Container_h */
