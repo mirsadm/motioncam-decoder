@@ -24,6 +24,8 @@ namespace motioncam {
     const uint32_t INDEX_MAGIC_NUMBER = 0x8A905612;
     const uint32_t GYRO_DATA_VERSION = 1;
     const uint32_t GYRO_INDEX_VERSION = 1;
+    const uint32_t ACCELEROMETER_DATA_VERSION = 1;
+    const uint32_t ACCELEROMETER_INDEX_VERSION = 1;
     
     const uint8_t CONTAINER_VERSION = 3;
     const uint8_t CONTAINER_ID[7] = {'M', 'O', 'T', 'I', 'O', 'N', ' '};
@@ -48,7 +50,11 @@ namespace motioncam {
         AUDIO_DATA_METADATA = 6,
         AUDIO_DATA_F32 = 7,
         GYRO_INDEX = 8,
-        GYRO_DATA = 9
+        GYRO_DATA = 9,
+        OIS_INDEX = 10,
+        OIS_DATA = 11,
+        ACCELEROMETER_INDEX = 12,
+        ACCELEROMETER_DATA = 13
     };
 
     struct Item {
@@ -81,15 +87,29 @@ namespace motioncam {
         uint32_t numSamples;
     };
 
+    struct AccelerometerDataHeader {
+        uint32_t version;
+        uint32_t numSamples;
+    };
+
     struct GyroIndex {
         uint32_t version;
         uint32_t numOffsets;
     };
 
+    struct AccelerometerIndex {
+        uint32_t version;
+        uint32_t numOffsets;
+    };
+
     static_assert(sizeof(GyroDataHeader) == 8);
+    static_assert(sizeof(AccelerometerDataHeader) == 8);
     static_assert(sizeof(GyroIndex) == 8);
+    static_assert(sizeof(AccelerometerIndex) == 8);
     static_assert(std::is_trivially_copyable_v<GyroDataHeader>);
+    static_assert(std::is_trivially_copyable_v<AccelerometerDataHeader>);
     static_assert(std::is_trivially_copyable_v<GyroIndex>);
+    static_assert(std::is_trivially_copyable_v<AccelerometerIndex>);
 }
 
 #endif /* Container_h */

@@ -82,12 +82,22 @@ namespace motioncam {
         // Load all raw gyro samples. Timestamps use the same nanosecond timeline
         // as frame timestamps; axis values are radians per second.
         void loadGyroData(std::vector<MotionSample>& outGyroSamples);
+
+        // Whether the container has embedded accelerometer samples.
+        bool hasAccelerometerData() const;
+
+        // Append all accelerometer samples in chunk order. Timestamps use the
+        // frame nanosecond timeline; values are m/s^2 including gravity, retaining
+        // the source platform's sensor axes/signs. No resampling or conversion.
+        // Containers without accelerometer data leave outSamples unchanged.
+        void loadAccelerometerData(std::vector<MotionSample>& outSamples);
         
     private:
         void init();
         void read(void* data, size_t size, size_t items=1) const;
         void readIndex();
         void readGyroIndex(uint32_t itemSize);
+        void readAccelerometerIndex(uint32_t itemSize);
         bool payloadFitsInFile(uint32_t itemSize) const;
         void reindexOffsets();
         void readExtra();
@@ -99,6 +109,7 @@ namespace motioncam {
         std::vector<BufferOffset> mOffsets;
         std::vector<BufferOffset> mAudioOffsets;
         std::vector<BufferOffset> mGyroOffsets;
+        std::vector<BufferOffset> mAccelerometerOffsets;
         std::map<Timestamp, BufferOffset> mFrameOffsetMap;
         std::vector<Timestamp> mFrameList;
         nlohmann::json mMetadata;

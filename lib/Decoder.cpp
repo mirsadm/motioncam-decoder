@@ -203,6 +203,10 @@ namespace motioncam {
         return !mGyroOffsets.empty();
     }
 
+    bool Decoder::hasAccelerometerData() const {
+        return !mAccelerometerOffsets.empty();
+    }
+
     void Decoder::loadGyroData(std::vector<MotionSample>& outGyroSamples) {
         for(const auto& offset : mGyroOffsets) {
             if(FSEEK(mFile, offset.offset, SEEK_SET) != 0)
@@ -228,6 +232,35 @@ namespace motioncam {
             const size_t oldSize = outGyroSamples.size();
             outGyroSamples.resize(oldSize + header.numSamples);
             read(outGyroSamples.data() + oldSize, sizeof(MotionSample), header.numSamples);
+        }
+    }
+
+    void Decoder::loadAccelerometerData(std::vector<MotionSample>& outSamples) {
+        for(const auto& offset : mAccelerometerOffsets) {
+            if(FSEEK(mFile, offset.offset, SEEK_SET) != 0)
+                throw IOException("Invalid accelerometer data offset");
+
+            Item item{};
+            read(&item, sizeof(Item));
+
+            if(item.type != Type::ACCELEROMETER_DATA || item.size < sizeof(AccelerometerDataHeader)
+                || !payloadFitsInFile(item.size))
+                throw IOException("Invalid accelerometer data");
+
+            AccelerometerDataHeader header{};
+            read(&header, sizeof(AccelerometerDataHeader));
+
+            const uint64_t expectedSize = sizeof(AccelerometerDataHeader)
+                + static_cast<uint64_t>(header.numSamples) * sizeof(MotionSample);
+            if(header.version != ACCELEROMETER_DATA_VERSION || header.numSamples == 0 || expectedSize != item.size)
+                throw IOException("Invalid accelerometer data");
+
+            if(header.numSamples > outSamples.max_size() - outSamples.size())
+                throw IOException("Too many accelerometer samples");
+
+            const size_t oldSize = outSamples.size();
+            outSamples.resize(oldSize + header.numSamples);
+            read(outSamples.data() + oldSize, sizeof(MotionSample), header.numSamples);
         }
     }
     
@@ -396,6 +429,16 @@ namespace motioncam {
             else if(item.type == Type::GYRO_INDEX) {
                 readGyroIndex(item.size);
             }
+            else if(item.type == Type::ACCELEROMETER_INDEX) {
+                readAccelerometerIndex(item.size);
+            }
+            else if(item.type == Type::ACCELEROMETER_DATA || item.type == Type::OIS_DATA
+                || item.type == Type::OIS_INDEX) {
+                // OIS items can precede the accelerometer index in the tail.
+                // Skip their payloads without interpreting or allocating them.
+                if(!payloadFitsInFile(item.size) || FSEEK(mFile, item.size, SEEK_CUR) != 0)
+                    throw IOException("Invalid motion data payload");
+            }
             else {
                 break;
             }
@@ -417,6 +460,23 @@ namespace motioncam {
 
         mGyroOffsets.resize(index.numOffsets);
         read(mGyroOffsets.data(), sizeof(BufferOffset), mGyroOffsets.size());
+    }
+
+    void Decoder::readAccelerometerIndex(const uint32_t itemSize) {
+        if(itemSize < sizeof(AccelerometerIndex) || !payloadFitsInFile(itemSize))
+            throw IOException("Invalid accelerometer index");
+
+        AccelerometerIndex index{};
+        read(&index, sizeof(AccelerometerIndex));
+
+        const uint64_t expectedSize = sizeof(AccelerometerIndex)
+            + static_cast<uint64_t>(index.numOffsets) * sizeof(BufferOffset);
+        const uint64_t maxOffsets = static_cast<uint64_t>(mOffsets.size()) + 1;
+        if(index.version != ACCELEROMETER_INDEX_VERSION || expectedSize != itemSize || index.numOffsets > maxOffsets)
+            throw IOException("Invalid accelerometer index");
+
+        mAccelerometerOffsets.resize(index.numOffsets);
+        read(mAccelerometerOffsets.data(), sizeof(BufferOffset), mAccelerometerOffsets.size());
     }
 
     bool Decoder::payloadFitsInFile(const uint32_t itemSize) const {
