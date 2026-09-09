@@ -31,6 +31,10 @@ if (BUILD_TESTING)
     add_executable(decoder_gyro_test tests/DecoderGyroTest.cpp)
     target_link_libraries(decoder_gyro_test PRIVATE motioncam_decoder)
     add_test(NAME decoder_gyro_test COMMAND decoder_gyro_test)
+
+    add_executable(decoder_accelerometer_test tests/DecoderAccelerometerTest.cpp)
+    target_link_libraries(decoder_accelerometer_test PRIVATE motioncam_decoder)
+    add_test(NAME decoder_accelerometer_test COMMAND decoder_accelerometer_test)
 endif()
 
 if (MSVC)

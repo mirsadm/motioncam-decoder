@@ -36,6 +36,39 @@ if(decoder.hasGyroData())
     decoder.loadGyroData(gyroSamples);
 ```
 
+### Embedded accelerometer data
+
+New `.mcraw` files can also contain accelerometer samples. They use the same
+nanosecond timeline as frames and gyro samples. Values are **m/s² including
+gravity**, retaining the source platform's sensor axes and sign convention.
+MotionCam already converts iOS values from g when recording; do not convert them
+again when decoding. The decoder preserves sample timestamps and values without
+resampling or rotating them into image coordinates.
+
+```cpp
+motioncam::Decoder decoder("input.mcraw");
+std::vector<motioncam::MotionSample> accelerometerSamples;
+
+if(decoder.hasAccelerometerData())
+    decoder.loadAccelerometerData(accelerometerSamples);
+```
+
+Like `loadGyroData`, `loadAccelerometerData` appends to the supplied vector. Files
+without accelerometer data leave the vector unchanged. OIS chunks are safely
+skipped so they do not prevent discovery of the accelerometer index; OIS samples
+are not exposed by this API.
+
+The stream uses item IDs 12 (index) and 13 (data), with version-1 headers and the
+existing 24-byte `MotionSample` layout. The container version remains 3.
+
+To run the decoder regression tests:
+
+```sh
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
 
 ## Sample Files
 
