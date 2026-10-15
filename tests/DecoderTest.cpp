@@ -173,7 +173,9 @@ namespace {
         return offset;
     }
 
-    void writeContainer(const std::filesystem::path& path, const bool validIndexMagic = true) {
+    void writeContainer(const std::filesystem::path& path, const bool validIndexMagic = true,
+        const std::string& currentMetadata =
+            R"({"width":64,"height":4,"compressionType":7,"label":"current"})") {
         std::ofstream output(path, std::ios::binary);
 
         motioncam::Header header{};
@@ -192,8 +194,6 @@ namespace {
 
         const std::string legacyMetadata =
             R"({"width":32,"height":1,"compressionType":6,"label":"legacy"})";
-        const std::string currentMetadata =
-            R"({"width":64,"height":4,"compressionType":7,"label":"current"})";
 
         std::vector<motioncam::BufferOffset> frameOffsets;
         frameOffsets.push_back(writeFrame(
@@ -369,6 +369,85 @@ namespace {
         });
     }
 
+    void testEncodedFrameCallback() {
+        TemporaryFile file;
+        const std::string originalJson =
+            " { \"label\": \"current\", \"compressionType\": 7, \"height\": 4, \"width\": 64 } ";
+        writeContainer(file.path(), true, originalJson);
+        motioncam::Decoder decoder(file.path().string());
+        const auto expectedPayload = makeCurrentConstantFrame();
+        std::vector<uint8_t> pixels;
+        nlohmann::json metadata;
+        int calls = 0;
+        motioncam::EncodedFrameCallback accept = [&](motioncam::Timestamp timestamp,
+            const uint8_t* payload, size_t size, const uint8_t* json, size_t jsonSize) {
+            ++calls;
+            expectEq("inspection timestamp", CURRENT_FRAME_TIMESTAMP_NS, timestamp);
+            expectEq("original compressed bytes", expectedPayload, std::vector<uint8_t>(payload, payload + size));
+            expectEq("original JSON bytes", originalJson, std::string(reinterpret_cast<const char*>(json), jsonSize));
+            // A nested load must not overwrite the outer frame's inspected bytes.
+            std::vector<uint8_t> nestedPixels;
+            nlohmann::json nestedMetadata;
+            decoder.loadFrame(LEGACY_FRAME_TIMESTAMP_NS, nestedPixels, nestedMetadata);
+            expectLegacyPixels("nested frame", nestedPixels);
+            expectEq("payload survives nested load", expectedPayload, std::vector<uint8_t>(payload, payload + size));
+            return true;
+        };
+        decoder.loadFrame(CURRENT_FRAME_TIMESTAMP_NS, pixels, metadata, accept);
+        expectCurrentPixels("inspected frame", pixels);
+        expectEq("callback called once", 1, calls);
+        expectEq("inspected metadata", std::string("current"), metadata.at("label").get<std::string>());
+
+        const auto savedPixels = pixels;
+        const auto savedMetadata = metadata;
+        motioncam::EncodedFrameCallback reject = [](motioncam::Timestamp, const uint8_t*, size_t, const uint8_t*, size_t) {
+            return false;
+        };
+        expectIOException("false callback rejects", [&]() {
+            decoder.loadFrame(CURRENT_FRAME_TIMESTAMP_NS, pixels, metadata, reject);
+        });
+        expectIOException("empty callback rejects", [&]() {
+            decoder.loadFrame(CURRENT_FRAME_TIMESTAMP_NS, pixels, metadata, {});
+        });
+        bool propagated = false;
+        try {
+            decoder.loadFrame(CURRENT_FRAME_TIMESTAMP_NS, pixels, metadata,
+                [](motioncam::Timestamp, const uint8_t*, size_t, const uint8_t*, size_t) -> bool {
+                    throw std::runtime_error("callback unavailable");
+                });
+        }
+        catch(const std::runtime_error& error) {
+            propagated = std::string(error.what()) == "callback unavailable";
+        }
+        expectTrue("callback exception propagates", propagated);
+        expectEq("rejected frame leaves pixels unchanged", savedPixels, pixels);
+        expectEq("rejected frame leaves metadata unchanged", savedMetadata, metadata);
+        expectIOException("missing frame never invokes callback", [&]() {
+            decoder.loadFrame(-1, pixels, metadata, accept);
+        });
+        expectEq("missing frame callback count", 1, calls);
+        decoder.loadFrame(CURRENT_FRAME_TIMESTAMP_NS, pixels, metadata, accept);
+        expectCurrentPixels("inspected load after rejection", pixels);
+        expectEq("repeat frame is inspected again", 2, calls);
+
+        // Inspection must run before JSON parsing (and therefore before decoding).
+        TemporaryFile malformed;
+        writeContainer(malformed.path(), true, "not valid JSON");
+        motioncam::Decoder invalid(malformed.path().string());
+        bool rejectedBeforeParse = false;
+        try {
+            invalid.loadFrame(CURRENT_FRAME_TIMESTAMP_NS, pixels, metadata,
+                [&](motioncam::Timestamp, const uint8_t*, size_t, const uint8_t* json, size_t size) {
+                    expectEq("malformed JSON reaches callback unchanged", std::string("not valid JSON"),
+                        std::string(reinterpret_cast<const char*>(json), size));
+                    return false;
+                });
+        }
+        catch(const motioncam::IOException&) { rejectedBeforeParse = true; }
+        catch(...) { }
+        expectTrue("reject before parsing", rejectedBeforeParse);
+    }
+
     void testInvalidContainerIsRejected() {
         TemporaryFile file;
         writeContainer(file.path(), false);
@@ -382,6 +461,7 @@ int main() {
     testRawDecoders();
     testDecoderPublicApi();
     testInvalidContainerIsRejected();
+    testEncodedFrameCallback();
 
     if(failures == 0)
         std::cout << "DecoderTest passed\n";

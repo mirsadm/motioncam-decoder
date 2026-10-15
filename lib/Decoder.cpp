@@ -265,6 +265,18 @@ namespace motioncam {
     }
     
     void Decoder::loadFrame(const Timestamp timestamp, std::vector<uint8_t>& outData, nlohmann::json& outMetadata) {
+        loadFrameImpl(timestamp, outData, outMetadata, nullptr);
+    }
+
+    void Decoder::loadFrame(const Timestamp timestamp, std::vector<uint8_t>& outData,
+        nlohmann::json& outMetadata, const EncodedFrameCallback& callback) {
+        if(!callback)
+            throw IOException("Frame callback is required");
+        loadFrameImpl(timestamp, outData, outMetadata, &callback);
+    }
+
+    void Decoder::loadFrameImpl(const Timestamp timestamp, std::vector<uint8_t>& outData,
+        nlohmann::json& outMetadata, const EncodedFrameCallback* callback) {
 
         if(mFrameOffsetMap.find(timestamp) == mFrameOffsetMap.end())
             throw IOException("Frame not found (timestamp: " + std::to_string(timestamp) + ")");
@@ -280,9 +292,12 @@ namespace motioncam {
         if(bufferItem.type != Type::BUFFER)
             throw IOException("Invalid buffer type");
 
-        mTmpBuffer.resize(bufferItem.size);
-
-        read(mTmpBuffer.data(), bufferItem.size);
+        // Own the bytes locally across the callback, including reentrant frame loads.
+        // Reuse the previous allocation on the usual non-reentrant path.
+        std::vector<uint8_t> encodedData;
+        encodedData.swap(mTmpBuffer);
+        encodedData.resize(bufferItem.size);
+        read(encodedData.data(), bufferItem.size);
 
         // Get metadata
         Item metadataItem{};
@@ -293,6 +308,10 @@ namespace motioncam {
 
         std::vector<uint8_t> metadataJson(metadataItem.size);
         read(metadataJson.data(), metadataItem.size);
+
+        if(callback && !(*callback)(timestamp, encodedData.data(), encodedData.size(),
+            metadataJson.data(), metadataJson.size()))
+            throw IOException("Frame load cancelled by callback (timestamp: " + std::to_string(timestamp) + ")");
 
         std::string metadataString = std::string(metadataJson.begin(), metadataJson.end());
         outMetadata = nlohmann::json::parse(metadataString);
@@ -306,16 +325,17 @@ namespace motioncam {
         outData.resize(outputSizeBytes);
 
         if(compressionType == MOTIONCAM_COMPRESSION_TYPE) {
-            if(raw::Decode(reinterpret_cast<uint16_t*>(outData.data()), width, height, mTmpBuffer.data(), mTmpBuffer.size()) <= 0)
+            if(raw::Decode(reinterpret_cast<uint16_t*>(outData.data()), width, height, encodedData.data(), encodedData.size()) <= 0)
                 throw IOException("Failed to uncompress frame");
         }
         else if(compressionType == MOTIONCAM_COMPRESSION_TYPE_LEGACY) {
-            if(raw::DecodeLegacy(reinterpret_cast<uint16_t*>(outData.data()), width, height, mTmpBuffer.data(), mTmpBuffer.size()) <= 0)
+            if(raw::DecodeLegacy(reinterpret_cast<uint16_t*>(outData.data()), width, height, encodedData.data(), encodedData.size()) <= 0)
                 throw IOException("Failed to uncompress legacy frame");
         }
         else {
             throw IOException("Invalid compression type");
         }
+        encodedData.swap(mTmpBuffer);
     }
 
     void Decoder::loadFrameMetadata(const Timestamp timestamp, nlohmann::json& outMetadata) {
