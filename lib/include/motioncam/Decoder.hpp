@@ -21,6 +21,7 @@
 #include <motioncam/MotionSample.hpp>
 #include <nlohmann/json.hpp>
 
+#include <functional>
 #include <string>
 #include <vector>
 #include <map>
@@ -45,6 +46,13 @@ namespace motioncam {
             virtual bool next(AudioChunk& output) = 0;
     };
     
+    // Views are valid only during the callback. Return true to continue loading,
+    // false to cancel. JSON is the exact on-disk byte sequence, not reserialized.
+    using EncodedFrameCallback = std::function<bool(
+        Timestamp timestamp,
+        const uint8_t* encodedData, size_t encodedSize,
+        const uint8_t* metadataJson, size_t metadataSize)>;
+
     class Decoder {
     public:
         Decoder(const std::string& path);
@@ -60,6 +68,13 @@ namespace motioncam {
         
         // Load a single frame and its metadata.
         void loadFrame(const Timestamp timestamp, std::vector<uint8_t>& outData, nlohmann::json& outMetadata);
+
+        // Inspect the compressed payload and original JSON before parsing/decoding.
+        // An empty callback or false result throws IOException. Callback exceptions
+        // propagate. Outputs are unchanged when cancelled; no pixels are decoded.
+        // Do not modify/retain the supplied buffers; keep the recording immutable.
+        void loadFrame(const Timestamp timestamp, std::vector<uint8_t>& outData,
+            nlohmann::json& outMetadata, const EncodedFrameCallback& callback);
 
         // Load metadata of a single frame.
         void loadFrameMetadata(const Timestamp timestamp, nlohmann::json& outMetadata);
@@ -93,6 +108,8 @@ namespace motioncam {
         void loadAccelerometerData(std::vector<MotionSample>& outSamples);
         
     private:
+        void loadFrameImpl(Timestamp timestamp, std::vector<uint8_t>& outData,
+            nlohmann::json& outMetadata, const EncodedFrameCallback* callback);
         void init();
         void read(void* data, size_t size, size_t items=1) const;
         void readIndex();

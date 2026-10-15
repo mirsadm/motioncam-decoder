@@ -22,6 +22,35 @@ To extract the first frame and audio from a `.mcraw` file run:
 
 `./example <path to mcraw file> -n 1`
 
+### Encoded-frame callback
+
+The four-argument `loadFrame()` overload lets an application inspect a frame's
+compressed payload and original JSON before parsing the JSON or decoding pixels:
+
+```cpp
+motioncam::EncodedFrameCallback inspect = [](motioncam::Timestamp timestamp,
+    const uint8_t* payload, size_t payloadSize,
+    const uint8_t* json, size_t jsonSize) {
+    // Inspect the original bytes, collect statistics, or apply application policy.
+    // Return false to cancel this load; true continues decoding.
+    return true;
+};
+decoder.loadFrame(timestamp, pixels, metadata, inspect);
+```
+
+The callback receives the frame timestamp, compressed bytes, and exact on-disk
+frame JSON bytes (not parsed or reserialized JSON). It runs once per load, and
+the decoder consumes the same payload buffer afterward, with no second payload
+read or copy. Views are valid only during the callback and must not be retained
+or modified. Keep the file unchanged while it is being read.
+
+An empty callback or `false` result throws `motioncam::IOException` before JSON
+parsing or pixel decoding. Callback exceptions propagate. Cancellation leaves
+output arguments unchanged; handle the exception before using outputs, which
+may still contain an earlier frame. Decoder instances are not safe for concurrent
+operations. The existing three-argument `loadFrame()` and metadata-only APIs
+retain their behavior and do not invoke a callback. No extra dependency is needed.
+
 ### Embedded gyro data
 
 Recent `.mcraw` files can contain raw gyroscope samples. The timestamps use the
